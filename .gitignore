@@ -1,0 +1,18 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Ignore Godot's import files
+*.import
+
+# Ignore Build folder
+/Builds/
+
+# Ignore temporary and cache files
+.export/
+.cache/
+.mono/
+
+# Ignore OS-generated files
+.DS_Store
+Thumbs.db

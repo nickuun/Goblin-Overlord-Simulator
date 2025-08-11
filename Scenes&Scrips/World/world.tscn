@@ -1,0 +1,80 @@
+[gd_scene load_steps=13 format=3 uid="uid://bx61vmhyxl5le"]
+
+[ext_resource type="Script" uid="uid://dvcyhg6b8wp7r" path="res://Scenes&Scrips/World/world.gd" id="1_1i41f"]
+[ext_resource type="PackedScene" uid="uid://bt0v8jw5qkj2x" path="res://Scenes&Scrips/Tilemaps/tilemaps.tscn" id="1_u1om0"]
+[ext_resource type="PackedScene" uid="uid://dxxvdnoyvhy2g" path="res://Scenes&Scrips/Goblins/GoblinGrunt/goblin.tscn" id="2_uvx4f"]
+[ext_resource type="Script" uid="uid://bi8uwvx2d86tv" path="res://Scenes&Scrips/ClickInput/click_input.gd" id="3_uvx4f"]
+[ext_resource type="Script" uid="uid://cjedp45di4xrv" path="res://Scenes&Scrips/Camera/MainCamera.gd" id="5_7basv"]
+[ext_resource type="Texture2D" uid="uid://cdfnmdlkgljfk" path="res://Assets/Characters/GoblinKing/Goblin King Sprite Sheet.png" id="6_ityab"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_0ycgl"]
+atlas = ExtResource("6_ityab")
+region = Rect2(0, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_rsgel"]
+atlas = ExtResource("6_ityab")
+region = Rect2(64, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_3nalg"]
+atlas = ExtResource("6_ityab")
+region = Rect2(128, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_12x52"]
+atlas = ExtResource("6_ityab")
+region = Rect2(192, 0, 64, 64)
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_1ebde"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_0ycgl")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_rsgel")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_3nalg")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_12x52")
+}],
+"loop": true,
+"name": &"default",
+"speed": 6.0
+}]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_kobsn"]
+
+[node name="World" type="Node2D"]
+script = ExtResource("1_1i41f")
+
+[node name="Tilemaps" parent="." instance=ExtResource("1_u1om0")]
+position = Vector2(0, 1)
+
+[node name="Goblin" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(357, 232)
+
+[node name="Goblin2" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(323, 309)
+
+[node name="ClickInput" type="Node2D" parent="."]
+script = ExtResource("3_uvx4f")
+floor_layer_path = NodePath("../Tilemaps/Floor")
+
+[node name="GameCamera" type="Camera2D" parent="."]
+position = Vector2(393, 266)
+script = ExtResource("5_7basv")
+
+[node name="GoblinKing" type="CharacterBody2D" parent="."]
+position = Vector2(447, 171)
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="GoblinKing"]
+position = Vector2(-1, -21)
+sprite_frames = SubResource("SpriteFrames_1ebde")
+autoplay = "default"
+frame_progress = 0.966135
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="GoblinKing"]
+shape = SubResource("CircleShape2D_kobsn")
+
+[editable path="Tilemaps"]

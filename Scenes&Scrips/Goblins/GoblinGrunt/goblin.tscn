@@ -1,0 +1,82 @@
+[gd_scene load_steps=13 format=3 uid="uid://dxxvdnoyvhy2g"]
+
+[ext_resource type="Script" uid="uid://dnvhhu0pnr3ye" path="res://Scenes&Scrips/Goblins/GoblinGrunt/goblin.gd" id="1_12xir"]
+[ext_resource type="Texture2D" uid="uid://bpqvm7bwxj5ew" path="res://Assets/Characters/Goblin/PNG/spr_idle_strip9.png" id="1_dyhe3"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_uvx4f"]
+atlas = ExtResource("1_dyhe3")
+region = Rect2(0, 0, 96, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_1i41f"]
+atlas = ExtResource("1_dyhe3")
+region = Rect2(96, 0, 96, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_7basv"]
+atlas = ExtResource("1_dyhe3")
+region = Rect2(192, 0, 96, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_ityab"]
+atlas = ExtResource("1_dyhe3")
+region = Rect2(288, 0, 96, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_0ycgl"]
+atlas = ExtResource("1_dyhe3")
+region = Rect2(384, 0, 96, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_rsgel"]
+atlas = ExtResource("1_dyhe3")
+region = Rect2(480, 0, 96, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_3nalg"]
+atlas = ExtResource("1_dyhe3")
+region = Rect2(576, 0, 96, 64)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_12x52"]
+atlas = ExtResource("1_dyhe3")
+region = Rect2(672, 0, 96, 64)
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_1ebde"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_uvx4f")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_1i41f")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_7basv")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_ityab")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_0ycgl")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_rsgel")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_3nalg")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_12x52")
+}],
+"loop": true,
+"name": &"default",
+"speed": 12.0
+}]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_kobsn"]
+radius = 6.0
+
+[node name="Goblin" type="CharacterBody2D"]
+script = ExtResource("1_12xir")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+sprite_frames = SubResource("SpriteFrames_1ebde")
+autoplay = "default"
+frame_progress = 0.364892
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_kobsn")
