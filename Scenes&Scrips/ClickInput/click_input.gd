@@ -17,6 +17,7 @@ var _drag_prev: Vector2i
 
 const MODE_BUILD: int = 1
 const MODE_ROOM: int = 2
+const MODE_SWEEP: int = 3
 var _mode: int = MODE_BUILD
 
 func _ready() -> void:
@@ -37,6 +38,15 @@ func _ready() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	
+	if event is InputEventKey and event.pressed:
+		var kev: InputEventKey = event
+		if kev.keycode == KEY_1:
+			_mode = MODE_BUILD
+		elif kev.keycode == KEY_2:
+			_mode = MODE_ROOM
+		elif kev.keycode == KEY_3:
+			_mode = MODE_SWEEP
+
 	
 	if _floor == null or _walls == null:
 		return
@@ -110,8 +120,8 @@ func _apply_cell_action(cell: Vector2i) -> void:
 				JobManager.remove_job_at(cell, "build_wall")
 			else:
 				JobManager.ensure_build_job(cell)
-	else:
-		# ROOM mode (Treasury)
+
+	elif _mode == MODE_ROOM:
 		if _drag_button == MOUSE_BUTTON_RIGHT:
 			if _drag_shift:
 				JobManager.remove_room_job_at(cell)
@@ -122,6 +132,16 @@ func _apply_cell_action(cell: Vector2i) -> void:
 				JobManager.remove_room_job_at(cell)
 			else:
 				JobManager.ensure_unassign_room_job(cell)
+
+	elif _mode == MODE_SWEEP:
+		if _drag_button == MOUSE_BUTTON_RIGHT:
+			if _drag_shift:
+				JobManager.remove_haul_job_at(cell)
+			else:
+				# only creates if a rock exists there
+				JobManager.ensure_haul_job(cell, "rock")
+		elif _drag_button == MOUSE_BUTTON_LEFT:
+			JobManager.remove_haul_job_at(cell)
 
 func _bresenham(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 	var points: Array[Vector2i] = []

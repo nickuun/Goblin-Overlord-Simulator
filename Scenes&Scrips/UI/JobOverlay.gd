@@ -17,6 +17,9 @@ var _build: Dictionary = {}    # Vector2i -> Job.Status
 var _room_assign: Dictionary = {}	# cell -> Status
 var _room_unassign: Dictionary = {}
 
+@export var color_haul: Color = Color(0.6, 0.3, 1.0, 0.35)	# purple
+var _haul: Dictionary = {}	# cell -> Status
+
 func _ready() -> void:
 	if floor_layer_path != NodePath(""):
 		_floor = get_node_or_null(floor_layer_path) as TileMapLayer
@@ -50,7 +53,9 @@ func _rebuild() -> void:
 
 func _update_job(job: Job) -> void:
 	if job.status == Job.Status.DONE or job.status == Job.Status.CANCELLED:
-		if job.type == "dig_wall":
+		if job.type == "haul_rock":
+			_haul.erase(job.target_cell)
+		elif job.type == "dig_wall":
 			_dig.erase(job.target_cell)
 		elif job.type == "build_wall":
 			_build.erase(job.target_cell)
@@ -60,6 +65,9 @@ func _update_job(job: Job) -> void:
 			_room_unassign.erase(job.target_cell)
 		return
 
+	if job.type == "haul_rock":
+		_haul[job.target_cell] = job.status
+		return
 	if job.type == "dig_wall":
 		_dig[job.target_cell] = job.status
 	elif job.type == "build_wall":
@@ -75,6 +83,15 @@ func _draw() -> void:
 
 	var size: Vector2 = Vector2(GridNav.cell_size)
 	var half: Vector2 = size * 0.5
+
+	for key in _haul.keys():
+		var st: int = int(_haul[key])
+		var ch: Color = color_haul
+		if st == Job.Status.RESERVED:
+			ch.a = ch.a * 0.6
+		elif st == Job.Status.ACTIVE:
+			ch.a = ch.a * 0.9
+		_draw_cell(key, size, half, ch)
 
 	for key in _dig.keys():
 		var c: Color = color_dig

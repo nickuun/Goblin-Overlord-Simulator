@@ -60,6 +60,11 @@ func _idle_shuffle():
 	_agent.set_destination_cell(dest)  # fire-and-forget small nudge
 
 func _go_do_job(job: Job) -> void:
+	
+	if job.type == "haul_rock":
+		await _do_haul(job)
+		return
+	
 	var attempts: int = 0
 	while attempts < 3:
 		var adj: Variant = _find_adjacent_for_job(job)
@@ -97,6 +102,55 @@ func _go_do_job(job: Job) -> void:
 	job.status = Job.Status.OPEN
 	job.reserved_by = NodePath("")
 	JobManager.job_updated.emit(job)
+	_current_job = null
+
+func _do_haul(job: Job) -> void:
+	# verify there is still an item
+	if not JobManager.has_ground_item(job.target_cell, "rock"):
+		JobManager.cancel_job(job)
+		_current_job = null
+		return
+
+	# go to the item cell
+	var start_cell: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
+	_agent.set_destination_cell(job.target_cell)
+	await _agent.arrived
+	var here: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
+	if here != job.target_cell:
+		JobManager.reopen_job(job)
+		_current_job = null
+		return
+
+	# pick it up (reserve already held by JobManager)
+	var ok: bool = JobManager.take_item(job.target_cell, "rock", 1)
+	if not ok:
+		JobManager.cancel_job(job)
+		_current_job = null
+		return
+
+	# find nearest reachable treasury cell
+	var deposit: Variant = JobManager.find_nearest_reachable_treasury_cell(here)
+	if deposit == null:
+		# no reachable treasury now; reopen so someone else can try later
+		JobManager.reopen_job(job)
+		# drop it back on ground so it isn't lost
+		JobManager.drop_item(here, "rock", 1)
+		_current_job = null
+		return
+
+	var depot_cell: Vector2i = deposit as Vector2i
+	_agent.set_destination_cell(depot_cell)
+	await _agent.arrived
+	var at_depot: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
+	if at_depot != depot_cell:
+		# failed; reopen and drop back
+		JobManager.reopen_job(job)
+		JobManager.drop_item(here, "rock", 1)
+		_current_job = null
+		return
+
+	# done!
+	JobManager.complete_job(job)
 	_current_job = null
 
 

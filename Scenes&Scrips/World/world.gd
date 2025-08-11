@@ -8,7 +8,6 @@ extends Node2D
 
 @onready var rooms: TileMapLayer = $Tilemaps/Rooms
 
-
 func _ready() -> void:
 	
 	# add JobOverlay if not present
@@ -30,12 +29,15 @@ func _ready() -> void:
 		rooms.add_to_group("room_layer")
 
 	GridNav.build_from_layers(floor, walls)
+	
+	JobManager.treasury_capacity_per_tile = 5	# or 10, etc.
 	JobManager.init(floor, walls, rooms)
+	
 
 	# Optional: set the Treasury tile once (hardcoded)
-	# JobManager.room_treasury_source_id = <src_id>
-	# JobManager.room_treasury_atlas_coords = Vector2i(<x>, <y>)
-	# JobManager.room_treasury_alt = 0
+	 #JobManager.room_treasury_source_id = <src_id>
+	 #JobManager.room_treasury_atlas_coords = Vector2i(<x>, <y>)
+	 #JobManager.room_treasury_alt = 0
 
 
 	# (Optional) Point ClickInput to layers if you prefer explicit paths
