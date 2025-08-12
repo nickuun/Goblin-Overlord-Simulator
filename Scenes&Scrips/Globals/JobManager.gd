@@ -231,15 +231,15 @@ func request_job(worker: Node2D) -> Job:
 				if path_to_item.is_empty():
 					continue
 
-				var depot_variant = find_nearest_reachable_treasury_cell_with_space(j.target_cell)
+				var depot_variant = find_best_deposit_cell_for_item(j.target_cell, "rock")
 				if depot_variant == null:
 					continue
 
 				var depot_cell: Vector2i = depot_variant as Vector2i
-				j.data["deposit_cell"] = depot_cell			# <- always a Vector2i
+				j.data["deposit_cell"] = depot_cell
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
-				_reserve_treasury_cell(depot_cell)			# <- per-cell reservation
+				_reserve_treasury_cell(depot_cell)
 				job_updated.emit(j)
 				return j
 
@@ -320,12 +320,105 @@ func complete_job(job: Job) -> void:
 			_add_treasury_item(depot_cell, "rock", int(job.data.get("count", 1)))
 		else:
 			# fallback only if older jobs exist with no deposit set
-			var depot = find_nearest_reachable_treasury_cell_with_space(job.target_cell)
+			#var depot = find_nearest_reachable_treasury_cell_with_space(job.target_cell)
+			var depot = find_best_deposit_cell_for_item(job.target_cell, "rock")
+
 			if depot != null:
 				_add_treasury_item(depot as Vector2i, "rock", int(job.data.get("count", 1)))
 
 	job.status = Job.Status.DONE
 	job_completed.emit(job)
+
+func _nearest_reachable_treasury_with_space(from_cell: Vector2i) -> Variant:
+	var found: bool = false
+	var best_cell: Vector2i = Vector2i.ZERO
+	var best_steps: int = 0
+	for key in treasury_cells.keys():
+		var tcell: Vector2i = key
+		if _cell_free_effective(tcell) <= 0:
+			continue
+		var path: PackedVector2Array = GridNav.find_path_cells(from_cell, tcell)
+		if path.is_empty():
+			continue
+		var steps: int = max(0, path.size() - 1)
+		if not found or steps < best_steps:
+			found = true
+			best_steps = steps
+			best_cell = tcell
+	if found:
+		return best_cell
+	return null
+
+func _treasury_area_from(seed: Vector2i) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var q: Array[Vector2i] = []
+	var seen := {}
+	if not treasury_cells.has(seed):
+		return out
+	q.append(seed)
+	seen[seed] = true
+	while q.size() > 0:
+		var c: Vector2i = q.pop_front()
+		out.append(c)
+		for d: Vector2i in DIR4:
+			var n: Vector2i = c + d
+			if treasury_cells.has(n) and not seen.has(n):
+				seen[n] = true
+				q.append(n)
+	return out
+
+func find_best_deposit_cell_for_item(from_cell: Vector2i, kind: String) -> Variant:
+	# Seed = nearest reachable treasury tile with any space
+	var seed_variant = _nearest_reachable_treasury_with_space(from_cell)
+	if seed_variant == null:
+		return null
+	var seed: Vector2i = seed_variant as Vector2i
+
+	# Work inside the connected area of that seed
+	var area: Array[Vector2i] = _treasury_area_from(seed)
+
+	# 1) prefer partially filled stacks with free space (compaction)
+	var found: bool = false
+	var best_cell: Vector2i = Vector2i.ZERO
+	var best_steps: int = 0
+	for cell: Vector2i in area:
+		var free: int = _cell_free_effective(cell)
+		if free <= 0:
+			continue
+		var stored: int = _cell_stored(cell)
+		if stored <= 0:
+			continue
+		var path1: PackedVector2Array = GridNav.find_path_cells(from_cell, cell)
+		if path1.is_empty():
+			continue
+		var steps1: int = max(0, path1.size() - 1)
+		if not found or steps1 < best_steps:
+			found = true
+			best_steps = steps1
+			best_cell = cell
+	if found:
+		return best_cell
+
+	# 2) otherwise nearest with space in the same area
+	found = false
+	for cell2: Vector2i in area:
+		var free2: int = _cell_free_effective(cell2)
+		if free2 <= 0:
+			continue
+		var path2: PackedVector2Array = GridNav.find_path_cells(from_cell, cell2)
+		if path2.is_empty():
+			continue
+		var steps2: int = max(0, path2.size() - 1)
+		if not found or steps2 < best_steps:
+			found = true
+			best_steps = steps2
+			best_cell = cell2
+	if found:
+		return best_cell
+
+	# 3) absolute fallback across all treasury
+	return _nearest_reachable_treasury_with_space(from_cell)
+
 
 func _find_reachable_adjacent(worker: Node2D, target_cell: Vector2i) -> Variant:
 	if floor_layer == null:
