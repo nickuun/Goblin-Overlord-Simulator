@@ -3,6 +3,7 @@ extends Node2D
 
 @onready var floor: TileMapLayer = $Tilemaps/Floor
 @onready var walls: TileMapLayer = $Tilemaps/Walls
+@onready var items: TileMapLayer = $Tilemaps/Items
 @onready var click: ClickInput = $ClickInput
 @onready var goblin: Goblin = $Goblin
 
@@ -31,8 +32,8 @@ func _ready() -> void:
 	GridNav.build_from_layers(floor, walls)
 	
 	JobManager.treasury_capacity_per_tile = 5	# or 10, etc.
-	JobManager.init(floor, walls, rooms)
-	
+	JobManager.set_rock_tiles(1, Vector2i(34,4), Vector2i(33,4), Vector2i(32,4), Vector2i(31,4), 0)
+	JobManager.init(floor, walls, rooms, items)	
 
 	# Optional: set the Treasury tile once (hardcoded)
 	 #JobManager.room_treasury_source_id = <src_id>

@@ -20,6 +20,8 @@ var _room_unassign: Dictionary = {}
 @export var color_haul: Color = Color(0.6, 0.3, 1.0, 0.35)	# purple
 var _haul: Dictionary = {}	# cell -> Status
 
+
+
 func _ready() -> void:
 	if floor_layer_path != NodePath(""):
 		_floor = get_node_or_null(floor_layer_path) as TileMapLayer

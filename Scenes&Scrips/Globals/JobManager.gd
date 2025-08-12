@@ -32,12 +32,34 @@ var treasury_cells: Dictionary = {}	# cell(Vector2i) -> true
 var treasury_stored_rock: int = 0
 var treasury_reserved: int = 0	# slots reserved by in-flight haul jobs
 
-func init(floor: TileMapLayer, walls: TileMapLayer, rooms: TileMapLayer) -> void:
+var items_layer: TileMapLayer
+
+# ground items: cell -> {"rock": count}
+
+# rock visuals
+@export var rock_stack_max_per_cell: int = 12
+@export var rock_source_id: int = -1
+@export var rock_atlas_coords_0: Vector2i = Vector2i.ZERO
+@export var rock_atlas_coords_1: Vector2i = Vector2i.ZERO
+@export var rock_atlas_coords_2: Vector2i = Vector2i.ZERO
+@export var rock_atlas_coords_3: Vector2i = Vector2i.ZERO
+@export var rock_alt: int = 0
+
+func init(floor: TileMapLayer, walls: TileMapLayer, rooms: TileMapLayer, items: TileMapLayer) -> void:
 	floor_layer = floor
 	walls_layer = walls
 	rooms_layer = rooms
+	items_layer = items
 	_rebuild_treasury_cells()
 	treasury_reserved = 0
+
+func set_rock_tiles(source_id: int, a0: Vector2i, a1: Vector2i, a2: Vector2i, a3: Vector2i, alternative: int) -> void:
+	rock_source_id = source_id
+	rock_atlas_coords_0 = a0
+	rock_atlas_coords_1 = a1
+	rock_atlas_coords_2 = a2
+	rock_atlas_coords_3 = a3
+	rock_alt = alternative
 
 func _rebuild_treasury_cells() -> void:
 	treasury_cells.clear()
@@ -58,6 +80,7 @@ func drop_item(cell: Vector2i, kind: String, count: int) -> void:
 	var cur: int = int(bucket.get(kind, 0))
 	bucket[kind] = cur + count
 	items_on_ground[cell] = bucket
+	_refresh_item_cell_visual(cell)
 
 func has_ground_item(cell: Vector2i, kind: String) -> bool:
 	if not items_on_ground.has(cell):
@@ -78,6 +101,7 @@ func take_item(cell: Vector2i, kind: String, count: int) -> bool:
 		items_on_ground.erase(cell)
 	else:
 		items_on_ground[cell] = bucket
+	_refresh_item_cell_visual(cell)
 	return true
 
 func find_nearest_reachable_treasury_cell(from_cell: Vector2i) -> Variant:
@@ -121,7 +145,6 @@ func remove_haul_job_at(cell: Vector2i) -> void:
 	var j: Job = get_job_at(cell, "haul_rock")
 	if j != null and (j.status == Job.Status.OPEN or j.status == Job.Status.RESERVED):
 		cancel_job(j)
-
 
 func create_dig_job(cell: Vector2i) -> Job:
 	if walls_layer == null:
@@ -396,7 +419,7 @@ func _ensure_room_tile_defaults(room_kind: String) -> void:
 		room_treasury_alt = alt
 
 func reopen_job(job: Job) -> void:
-	#TODO PICKUP
+	#TODO reopen job when goblin is picked up off the ground - coming later
 	if job == null:
 		return
 	if job.type == "haul_rock":
@@ -405,3 +428,43 @@ func reopen_job(job: Job) -> void:
 	job.status = Job.Status.OPEN
 	job.reserved_by = NodePath("")
 	job_updated.emit(job)
+
+func _refresh_item_cell_visual(cell: Vector2i) -> void:
+	if items_layer == null:
+		return
+
+	var count: int = 0
+	if items_on_ground.has(cell):
+		var bucket: Dictionary = items_on_ground[cell]
+		count = int(bucket.get("rock", 0))
+
+	if count <= 0:
+		items_layer.erase_cell(cell)
+		return
+
+	if rock_source_id == -1:
+		# no config yet; keep invisible rather than erroring
+		return
+
+	var idx: int = _rock_index_for_count(count)
+	var atlas: Vector2i = rock_atlas_coords_0
+	if idx == 1:
+		atlas = rock_atlas_coords_1
+	elif idx == 2:
+		atlas = rock_atlas_coords_2
+	elif idx == 3:
+		atlas = rock_atlas_coords_3
+
+	items_layer.set_cell(cell, rock_source_id, atlas, rock_alt)
+
+func _rock_index_for_count(count: int) -> int:
+	var maxv: int = max(1, rock_stack_max_per_cell)
+	var r: float = float(count) / float(maxv)
+	if r <= 0.25:
+		return 0
+	elif r <= 0.5:
+		return 1
+	elif r <= 0.75:
+		return 2
+	else:
+		return 3
