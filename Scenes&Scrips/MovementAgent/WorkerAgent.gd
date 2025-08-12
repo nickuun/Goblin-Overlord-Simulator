@@ -129,7 +129,8 @@ func _do_haul(job: Job) -> void:
 		return
 
 	# find nearest reachable treasury cell
-	var deposit: Variant = JobManager.find_nearest_reachable_treasury_cell(here)
+	var deposit: Variant = JobManager.find_nearest_reachable_treasury_cell_with_space(here)
+
 	if deposit == null:
 		# no reachable treasury now; reopen so someone else can try later
 		JobManager.reopen_job(job)
@@ -152,6 +153,7 @@ func _do_haul(job: Job) -> void:
 	# done!
 	JobManager.complete_job(job)
 	_current_job = null
+
 
 
 func _find_adjacent_for_job(job: Job) -> Variant:
