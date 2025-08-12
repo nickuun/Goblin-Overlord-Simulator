@@ -83,8 +83,6 @@ func _rebuild_treasury_cells() -> void:
 
 func _cell_capacity(cell: Vector2i) -> int:
 	return treasury_capacity_per_tile
-	
-
 
 func _cell_stored(cell: Vector2i) -> int:
 	if not treasury_contents.has(cell):
@@ -168,6 +166,7 @@ func _release_treasury_cell(cell: Vector2i) -> void:
 		treasury_reserved -= 1
 	var cur: int = int(treasury_reserved_per_cell.get(cell, 0))
 	treasury_reserved_per_cell[cell] = max(0, cur - 1)
+
 
 func create_haul_job(cell: Vector2i, kind: String) -> Job:
 	if not has_ground_item(cell, kind):
@@ -278,7 +277,7 @@ func complete_job(job: Job) -> void:
 			GridNav.astar.set_point_solid(job.target_cell, true)
 
 	elif job.type == "assign_room":
-		# place the Treasury visual AND register capacity + storage at this cell
+		# place Treasury tile + register capacity + init storage at this cell
 		_ensure_room_tile_defaults(job.data.get("room_kind", "treasury"))
 		if room_treasury_source_id == -1:
 			push_error("JobManager: room_treasury_source_id not set and no sample room tile found.")
@@ -289,19 +288,20 @@ func complete_job(job: Job) -> void:
 				treasury_contents[job.target_cell] = {"rock": 0}
 			if not treasury_reserved_per_cell.has(job.target_cell):
 				treasury_reserved_per_cell[job.target_cell] = 0
-			# refresh the Items layer so stored+ground piles render here
+			# make sure Items layer reflects any stored/ground piles here
 			_refresh_item_cell_visual(job.target_cell)
 
 	elif job.type == "unassign_room":
-		# remove Treasury; spill stored rocks to the ground at this cell
+		# spill stored rocks back onto the ground at this cell, then remove room
 		if rooms_layer != null:
 			var stored: int = _cell_stored(job.target_cell)
 			if stored > 0:
 				drop_item(job.target_cell, "rock", stored)
 				if treasury_contents.has(job.target_cell):
 					var bucket: Dictionary = treasury_contents[job.target_cell]
-					bucket["rock"] = 0
-					treasury_contents[job.target_cell] = bucket
+					if bucket.has("rock"):
+						bucket["rock"] = 0
+						treasury_contents[job.target_cell] = bucket
 			rooms_layer.erase_cell(job.target_cell)
 			_refresh_item_cell_visual(job.target_cell)
 			treasury_cells.erase(job.target_cell)
@@ -314,7 +314,7 @@ func complete_job(job: Job) -> void:
 			_release_treasury_cell(depot_cell)
 			_add_treasury_item(depot_cell, "rock", int(job.data.get("count", 1)))
 		else:
-			# fallback: find somewhere with space
+			# fallback: find somewhere with space if deposit wasn't set
 			var depot = find_nearest_reachable_treasury_cell_with_space(job.target_cell)
 			if depot != null:
 				_add_treasury_item(depot as Vector2i, "rock", int(job.data.get("count", 1)))
@@ -503,6 +503,7 @@ func cancel_job(job: Job) -> void:
 	job.status = Job.Status.CANCELLED
 	job_updated.emit(job)
 
+
 func _refresh_item_cell_visual(cell: Vector2i) -> void:
 	if items_layer == null:
 		return
@@ -511,16 +512,16 @@ func _refresh_item_cell_visual(cell: Vector2i) -> void:
 	if items_on_ground.has(cell):
 		ground = int((items_on_ground[cell] as Dictionary).get("rock", 0))
 	var stored: int = _cell_stored(cell)
-	var total: int = ground + stored
 
-	if total <= 0:
+	var count: int = ground + stored
+	if count <= 0:
 		items_layer.erase_cell(cell)
 		return
 
 	if rock_source_id == -1:
 		return
 
-	var idx: int = _rock_index_for_count(total)
+	var idx: int = _rock_index_for_count(count)
 	var atlas: Vector2i = rock_atlas_coords_0
 	if idx == 1:
 		atlas = rock_atlas_coords_1
@@ -539,6 +540,7 @@ func _add_treasury_item(cell: Vector2i, kind: String, count: int) -> void:
 	bucket[kind] = cur + count
 	treasury_contents[cell] = bucket
 	_refresh_item_cell_visual(cell)
+
 
 func _rock_index_for_count(count: int) -> int:
 	var maxv: int = max(1, rock_stack_max_per_cell)
