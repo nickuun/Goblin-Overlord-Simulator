@@ -23,6 +23,8 @@ var _haul: Dictionary = {}	# cell -> Status
 
 
 func _ready() -> void:
+	JobManager.items_changed.connect(_on_items_changed)
+
 	if floor_layer_path != NodePath(""):
 		_floor = get_node_or_null(floor_layer_path) as TileMapLayer
 	if _floor == null:
@@ -39,6 +41,13 @@ func _ready() -> void:
 	JobManager.job_completed.connect(_on_job_event)
 
 	_rebuild()
+	
+func _on_items_changed(cell: Vector2i) -> void:
+	# If no item on the ground anymore, remove the haul ghost for that cell
+	if not JobManager.has_ground_item(cell, "rock"):
+		_haul.erase(cell)
+	queue_redraw()
+
 
 func _on_job_event(job: Job) -> void:
 	_update_job(job)
@@ -56,7 +65,11 @@ func _rebuild() -> void:
 func _update_job(job: Job) -> void:
 	if job.status == Job.Status.DONE or job.status == Job.Status.CANCELLED:
 		if job.type == "haul_rock":
-			_haul.erase(job.target_cell)
+			if not JobManager.has_ground_item(job.target_cell, "rock"):
+				_haul.erase(job.target_cell)
+				return
+			_haul[job.target_cell] = job.status
+			return
 		elif job.type == "dig_wall":
 			_dig.erase(job.target_cell)
 		elif job.type == "build_wall":
@@ -68,6 +81,9 @@ func _update_job(job: Job) -> void:
 		return
 
 	if job.type == "haul_rock":
+		if job.data.has("picked_up") and bool(job.data["picked_up"]):
+			_haul.erase(job.target_cell)
+			return
 		_haul[job.target_cell] = job.status
 		return
 	if job.type == "dig_wall":

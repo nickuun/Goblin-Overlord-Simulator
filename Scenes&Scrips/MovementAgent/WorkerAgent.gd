@@ -105,14 +105,13 @@ func _go_do_job(job: Job) -> void:
 	_current_job = null
 
 func _do_haul(job: Job) -> void:
-	# verify there is still an item
+	# still there?
 	if not JobManager.has_ground_item(job.target_cell, "rock"):
 		JobManager.cancel_job(job)
 		_current_job = null
 		return
 
-	# go to the item cell
-	var start_cell: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
+	# go to item
 	_agent.set_destination_cell(job.target_cell)
 	await _agent.arrived
 	var here: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
@@ -121,40 +120,45 @@ func _do_haul(job: Job) -> void:
 		_current_job = null
 		return
 
-	# pick it up (reserve already held by JobManager)
+	# pick up one
 	var ok: bool = JobManager.take_item(job.target_cell, "rock", 1)
 	if not ok:
 		JobManager.cancel_job(job)
 		_current_job = null
 		return
 
-	# find nearest reachable treasury cell
-	var deposit: Variant = JobManager.find_nearest_reachable_treasury_cell_with_space(here)
-
-	if deposit == null:
-		# no reachable treasury now; reopen so someone else can try later
-		JobManager.reopen_job(job)
-		# drop it back on ground so it isn't lost
+	# must have a pre-assigned deposit cell; do NOT re-pick
+	if not job.data.has("deposit_cell"):
+		# put it back so the ghost reappears
 		JobManager.drop_item(here, "rock", 1)
+		JobManager.reopen_job(job)
 		_current_job = null
 		return
 
-	var depot_cell: Vector2i = deposit as Vector2i
+	var depot_cell: Vector2i = job.data["deposit_cell"] as Vector2i
+
+	# sanity: deposit cell must still be a treasury cell with capacity reserved
+	if not JobManager.treasury_cells.has(depot_cell):
+		# treasury changed; revert pickup and reopen
+		JobManager.drop_item(here, "rock", 1)
+		JobManager.reopen_job(job)
+		_current_job = null
+		return
+
+	# walk to the reserved depot cell
 	_agent.set_destination_cell(depot_cell)
 	await _agent.arrived
 	var at_depot: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
 	if at_depot != depot_cell:
-		# failed; reopen and drop back
-		JobManager.reopen_job(job)
+		# couldn't reach (map changed); revert pickup and reopen
 		JobManager.drop_item(here, "rock", 1)
+		JobManager.reopen_job(job)
 		_current_job = null
 		return
 
-	# done!
+	# complete (will add to EXACT depot_cell and refresh visuals)
 	JobManager.complete_job(job)
 	_current_job = null
-
-
 
 func _find_adjacent_for_job(job: Job) -> Variant:
 	var start_cell: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)

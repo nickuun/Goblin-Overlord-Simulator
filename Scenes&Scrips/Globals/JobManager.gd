@@ -46,6 +46,8 @@ var items_layer: TileMapLayer
 @export var rock_alt: int = 0
 var treasury_contents: Dictionary = {}		# cell(Vector2i) -> {"rock": count}
 var treasury_reserved_per_cell: Dictionary = {}	# cell -> reserved slots
+signal items_changed(cell: Vector2i)
+
 
 # rock visuals (keep your existing vars)
 # @export var rock_stack_max_per_cell: int = 12
@@ -114,6 +116,7 @@ func drop_item(cell: Vector2i, kind: String, count: int) -> void:
 	bucket[kind] = cur + count
 	items_on_ground[cell] = bucket
 	_refresh_item_cell_visual(cell)
+	items_changed.emit(cell)	# <-- NEW
 
 func has_ground_item(cell: Vector2i, kind: String) -> bool:
 	if not items_on_ground.has(cell):
@@ -135,6 +138,7 @@ func take_item(cell: Vector2i, kind: String, count: int) -> bool:
 	else:
 		items_on_ground[cell] = bucket
 	_refresh_item_cell_visual(cell)
+	items_changed.emit(cell)
 	return true
 
 func find_nearest_reachable_treasury_cell_with_space(from_cell: Vector2i) -> Variant:
@@ -227,16 +231,18 @@ func request_job(worker: Node2D) -> Job:
 				if path_to_item.is_empty():
 					continue
 
-				var depot = find_nearest_reachable_treasury_cell_with_space(j.target_cell)
-				if depot == null:
+				var depot_variant = find_nearest_reachable_treasury_cell_with_space(j.target_cell)
+				if depot_variant == null:
 					continue
 
-				j.data["deposit_cell"] = depot
+				var depot_cell: Vector2i = depot_variant as Vector2i
+				j.data["deposit_cell"] = depot_cell			# <- always a Vector2i
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
-				_reserve_treasury_cell(depot)
+				_reserve_treasury_cell(depot_cell)			# <- per-cell reservation
 				job_updated.emit(j)
 				return j
+
 			else:
 				var adj = _find_reachable_adjacent(worker, j.target_cell)
 				if adj != null:
@@ -308,13 +314,12 @@ func complete_job(job: Job) -> void:
 			treasury_reserved_per_cell.erase(job.target_cell)
 
 	elif job.type == "haul_rock":
-		# deposit into the specific reserved Treasury cell
 		if job.data.has("deposit_cell"):
-			var depot_cell: Vector2i = job.data["deposit_cell"]
+			var depot_cell: Vector2i = job.data["deposit_cell"] as Vector2i
 			_release_treasury_cell(depot_cell)
 			_add_treasury_item(depot_cell, "rock", int(job.data.get("count", 1)))
 		else:
-			# fallback: find somewhere with space if deposit wasn't set
+			# fallback only if older jobs exist with no deposit set
 			var depot = find_nearest_reachable_treasury_cell_with_space(job.target_cell)
 			if depot != null:
 				_add_treasury_item(depot as Vector2i, "rock", int(job.data.get("count", 1)))
@@ -491,6 +496,9 @@ func reopen_job(job: Job) -> void:
 		return
 	if job.type == "haul_rock" and job.data.has("deposit_cell"):
 		_release_treasury_cell(job.data["deposit_cell"])
+	# NEW: show ghost again if we put the rock back
+	if job.type == "haul_rock" and job.data.has("picked_up"):
+		job.data["picked_up"] = false
 	job.status = Job.Status.OPEN
 	job.reserved_by = NodePath("")
 	job_updated.emit(job)
