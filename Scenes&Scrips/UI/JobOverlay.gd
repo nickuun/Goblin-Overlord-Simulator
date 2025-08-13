@@ -63,14 +63,9 @@ func _rebuild() -> void:
 	queue_redraw()
 
 func _update_job(job: Job) -> void:
+	# remove ghosts for finished/cancelled jobs immediately
 	if job.status == Job.Status.DONE or job.status == Job.Status.CANCELLED:
-		if job.type == "haul_rock":
-			if not JobManager.has_ground_item(job.target_cell, "rock"):
-				_haul.erase(job.target_cell)
-				return
-			_haul[job.target_cell] = job.status
-			return
-		elif job.type == "dig_wall":
+		if job.type == "dig_wall":
 			_dig.erase(job.target_cell)
 		elif job.type == "build_wall":
 			_build.erase(job.target_cell)
@@ -78,22 +73,30 @@ func _update_job(job: Job) -> void:
 			_room_assign.erase(job.target_cell)
 		elif job.type == "unassign_room":
 			_room_unassign.erase(job.target_cell)
+		elif job.type == "haul_rock":
+			_haul.erase(job.target_cell)
 		return
 
-	if job.type == "haul_rock":
-		if job.data.has("picked_up") and bool(job.data["picked_up"]):
-			_haul.erase(job.target_cell)
-			return
-		_haul[job.target_cell] = job.status
-		return
+	# still-open jobs:
 	if job.type == "dig_wall":
 		_dig[job.target_cell] = job.status
+		return
 	elif job.type == "build_wall":
 		_build[job.target_cell] = job.status
+		return
 	elif job.type == "assign_room":
 		_room_assign[job.target_cell] = job.status
+		return
 	elif job.type == "unassign_room":
 		_room_unassign[job.target_cell] = job.status
+		return
+	elif job.type == "haul_rock":
+		# only show a haul ghost if the item still exists at that cell
+		if JobManager.has_ground_item(job.target_cell, "rock"):
+			_haul[job.target_cell] = job.status
+		else:
+			_haul.erase(job.target_cell)
+		return
 
 func _draw() -> void:
 	if _floor == null:

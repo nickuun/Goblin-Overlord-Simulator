@@ -627,7 +627,8 @@ func cancel_job(job: Job) -> void:
 	if job == null:
 		return
 	if job.type == "haul_rock" and job.data.has("deposit_cell"):
-		_release_treasury_cell(job.data["deposit_cell"])
+		_release_treasury_cell(job.data["deposit_cell"] as Vector2i)
+		job.data.erase("deposit_cell")
 	job.status = Job.Status.CANCELLED
 	job_updated.emit(job)
 
