@@ -231,17 +231,27 @@ func request_job(worker: Node2D) -> Job:
 				if path_to_item.is_empty():
 					continue
 
-				var depot_variant = find_best_deposit_cell_for_item(j.target_cell, "rock")
-				if depot_variant == null:
-					continue
+				var depot_cell: Vector2i
+				if j.data.has("deposit_cell"):
+					depot_cell = j.data["deposit_cell"] as Vector2i
+					# ensure still valid + has effective space
+					if not treasury_cells.has(depot_cell):
+						continue
+					if _cell_free_effective(depot_cell) <= 0:
+						continue
+				else:
+					var depot_variant = find_best_deposit_cell_for_item(j.target_cell, "rock")
+					if depot_variant == null:
+						continue
+					depot_cell = depot_variant as Vector2i
+					j.data["deposit_cell"] = depot_cell
 
-				var depot_cell: Vector2i = depot_variant as Vector2i
-				j.data["deposit_cell"] = depot_cell
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
 				_reserve_treasury_cell(depot_cell)
 				job_updated.emit(j)
 				return j
+
 
 			else:
 				var adj = _find_reachable_adjacent(worker, j.target_cell)
@@ -283,7 +293,6 @@ func complete_job(job: Job) -> void:
 			GridNav.astar.set_point_solid(job.target_cell, true)
 
 	elif job.type == "assign_room":
-		# place Treasury tile + register capacity + init storage at this cell
 		_ensure_room_tile_defaults(job.data.get("room_kind", "treasury"))
 		if room_treasury_source_id == -1:
 			push_error("JobManager: room_treasury_source_id not set and no sample room tile found.")
@@ -294,8 +303,26 @@ func complete_job(job: Job) -> void:
 				treasury_contents[job.target_cell] = {"rock": 0}
 			if not treasury_reserved_per_cell.has(job.target_cell):
 				treasury_reserved_per_cell[job.target_cell] = 0
-			# make sure Items layer reflects any stored/ground piles here
 			_refresh_item_cell_visual(job.target_cell)
+
+			# --- HOUSEKEEPING: auto-sweep rocks that already sit on this tile ---
+			# We DO NOT pin a deposit cell; assignment will choose the best stack
+			var ground_here: int = 0
+			if items_on_ground.has(job.target_cell):
+				var bucket_here: Dictionary = items_on_ground[job.target_cell]
+				ground_here = int(bucket_here.get("rock", 0))
+
+			if ground_here > 0:
+				# compute total free space across the *connected* treasury area
+				var area: Array[Vector2i] = _treasury_area_from(job.target_cell)
+				var free_total: int = 0
+				for cell_in_area: Vector2i in area:
+					free_total += max(0, _cell_free_effective(cell_in_area))
+
+				var to_queue: int = min(ground_here, free_total)
+				for i in range(to_queue):
+					# create a normal haul job from this tile; deposit will be chosen later
+					create_haul_job(job.target_cell, "rock")
 
 	elif job.type == "unassign_room":
 		# spill stored rocks back onto the ground at this cell, then remove room
@@ -633,6 +660,23 @@ func _refresh_item_cell_visual(cell: Vector2i) -> void:
 
 	items_layer.set_cell(cell, rock_source_id, atlas, rock_alt)
 
+func create_haul_job_to(source_cell: Vector2i, kind: String, deposit_cell: Vector2i) -> Job:
+	if not has_ground_item(source_cell, kind):
+		return null
+	if not treasury_cells.has(deposit_cell):
+		return null
+	var j: Job = Job.new()
+	j.id = _next_id
+	_next_id += 1
+	j.type = "haul_rock"
+	j.target_cell = source_cell
+	j.data["kind"] = kind
+	j.data["count"] = 1
+	j.data["deposit_cell"] = deposit_cell
+	jobs.append(j)
+	job_added.emit(j)
+	return j
+
 func _add_treasury_item(cell: Vector2i, kind: String, count: int) -> void:
 	if not treasury_contents.has(cell):
 		treasury_contents[cell] = {}
@@ -641,7 +685,6 @@ func _add_treasury_item(cell: Vector2i, kind: String, count: int) -> void:
 	bucket[kind] = cur + count
 	treasury_contents[cell] = bucket
 	_refresh_item_cell_visual(cell)
-
 
 func _rock_index_for_count(count: int) -> int:
 	var maxv: int = max(1, rock_stack_max_per_cell)
