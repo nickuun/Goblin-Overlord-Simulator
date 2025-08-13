@@ -15,10 +15,14 @@ var _drag_ctrl: bool = false
 var _drag_shift: bool = false
 var _drag_prev: Vector2i
 
+const MODE_INSPECT: int = 0
 const MODE_BUILD: int = 1
 const MODE_ROOM: int = 2
 const MODE_SWEEP: int = 3
 var _mode: int = MODE_BUILD
+
+var _room_kinds: Array[String] = ["treasury", "farm"]
+var _room_kind_index: int = 0
 
 func _ready() -> void:
 	_floor = null
@@ -40,24 +44,26 @@ func _unhandled_input(event: InputEvent) -> void:
 	
 	if event is InputEventKey and event.pressed:
 		var kev: InputEventKey = event
-		if kev.keycode == KEY_1:
+		if kev.keycode == KEY_0:
+			_mode = MODE_INSPECT
+			print("Mode: INSPECT")
+		elif kev.keycode == KEY_1:
 			_mode = MODE_BUILD
+			print("Mode: BUILD")
 		elif kev.keycode == KEY_2:
 			_mode = MODE_ROOM
+			print("Mode: ROOM (", _room_kinds[_room_kind_index], ")")
 		elif kev.keycode == KEY_3:
 			_mode = MODE_SWEEP
-
-	
-	if _floor == null or _walls == null:
-		return
-		
-	if event is InputEventKey and event.pressed:
-		var kev: InputEventKey = event
-		if kev.keycode == KEY_1:
-			_mode = MODE_BUILD
-		elif kev.keycode == KEY_2:
-			_mode = MODE_ROOM
-
+			print("Mode: SWEEP")
+		elif kev.keycode == KEY_UP and _mode == MODE_ROOM:
+			_room_kind_index = (_room_kind_index + 1) % _room_kinds.size()
+			print("Room kind -> ", _room_kinds[_room_kind_index])
+		elif kev.keycode == KEY_C and _mode == MODE_INSPECT:
+			var cellc: Vector2i = GridNav.world_to_cell(get_global_mouse_position(), _floor)
+			if FarmSystem.has_plot(cellc):
+				FarmSystem.set_crop(cellc, "carrot")
+				print("Set crop at ", cellc, " to carrot")
 
 	if event is InputEventMouseButton:
 		var ev: InputEventMouseButton = event
@@ -122,11 +128,12 @@ func _apply_cell_action(cell: Vector2i) -> void:
 				JobManager.ensure_build_job(cell)
 
 	elif _mode == MODE_ROOM:
+		var kind: String = _room_kinds[_room_kind_index]
 		if _drag_button == MOUSE_BUTTON_RIGHT:
 			if _drag_shift:
 				JobManager.remove_room_job_at(cell)
 			else:
-				JobManager.ensure_assign_room_job(cell, "treasury")
+				JobManager.ensure_assign_room_job(cell, kind)
 		elif _drag_button == MOUSE_BUTTON_LEFT:
 			if _drag_shift:
 				JobManager.remove_room_job_at(cell)
@@ -138,10 +145,20 @@ func _apply_cell_action(cell: Vector2i) -> void:
 			if _drag_shift:
 				JobManager.remove_haul_job_at(cell)
 			else:
-				# only creates if a rock exists there
-				JobManager.ensure_haul_job(cell, "rock")
+				JobManager.ensure_haul_job(cell, "rock")	# rocks (you can add carrots too)
 		elif _drag_button == MOUSE_BUTTON_LEFT:
 			JobManager.remove_haul_job_at(cell)
+
+	elif _mode == MODE_INSPECT:
+		if FarmSystem.has_plot(cell):
+			if _drag_button == MOUSE_BUTTON_LEFT:
+				FarmSystem.toggle_auto_harvest(cell)
+				var p := FarmSystem.get_plot(cell)
+				print("Farm ", cell, ": auto_harvest=", p.get("auto_harvest", true))
+			elif _drag_button == MOUSE_BUTTON_RIGHT:
+				FarmSystem.toggle_auto_replant(cell)
+				var p2 := FarmSystem.get_plot(cell)
+				print("Farm ", cell, ": auto_replant=", p2.get("auto_replant", true))
 
 func _bresenham(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 	var points: Array[Vector2i] = []

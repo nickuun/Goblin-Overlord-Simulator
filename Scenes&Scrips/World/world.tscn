@@ -60,6 +60,24 @@ position = Vector2(323, 309)
 [node name="Goblin3" parent="." instance=ExtResource("2_uvx4f")]
 position = Vector2(323, 309)
 
+[node name="Goblin4" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(287, 178)
+
+[node name="Goblin5" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(253, 255)
+
+[node name="Goblin6" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(253, 255)
+
+[node name="Goblin7" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(321, 199)
+
+[node name="Goblin8" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(287, 276)
+
+[node name="Goblin9" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(287, 276)
+
 [node name="ClickInput" type="Node2D" parent="."]
 script = ExtResource("3_uvx4f")
 floor_layer_path = NodePath("../Tilemaps/Floor")

@@ -1,4 +1,3 @@
-# tabs only 💚
 extends Node2D
 class_name JobOverlay
 
@@ -13,13 +12,15 @@ var _build: Dictionary = {}    # Vector2i -> Job.Status
 
 @export var color_room_assign: Color = Color(1.0, 0.8, 0.2, 0.35)	# gold
 @export var color_room_unassign: Color = Color(0.5, 0.5, 0.5, 0.35)	# gray
+@export var color_farm_harvest: Color = Color(0.3, 1.0, 0.3, 0.35)
+var _farm_harvest: Dictionary = {}	# cell -> Status
+
 
 var _room_assign: Dictionary = {}	# cell -> Status
 var _room_unassign: Dictionary = {}
 
 @export var color_haul: Color = Color(0.6, 0.3, 1.0, 0.35)	# purple
-var _haul: Dictionary = {}	# cell -> Status
-
+var _haul: Dictionary = {}	# cell -> {"status": int, "kind": String}
 
 
 func _ready() -> void:
@@ -43,11 +44,12 @@ func _ready() -> void:
 	_rebuild()
 	
 func _on_items_changed(cell: Vector2i) -> void:
-	# If no item on the ground anymore, remove the haul ghost for that cell
-	if not JobManager.has_ground_item(cell, "rock"):
-		_haul.erase(cell)
+	if _haul.has(cell):
+		var info: Dictionary = _haul[cell]
+		var kind: String = String(info.get("kind", "rock"))
+		if not JobManager.has_ground_item(cell, kind):
+			_haul.erase(cell)
 	queue_redraw()
-
 
 func _on_job_event(job: Job) -> void:
 	_update_job(job)
@@ -56,6 +58,7 @@ func _on_job_event(job: Job) -> void:
 func _rebuild() -> void:
 	_dig.clear()
 	_build.clear()
+	_farm_harvest.clear()
 	_room_assign.clear()
 	_room_unassign.clear()
 	for j: Job in JobManager.jobs:
@@ -73,8 +76,10 @@ func _update_job(job: Job) -> void:
 			_room_assign.erase(job.target_cell)
 		elif job.type == "unassign_room":
 			_room_unassign.erase(job.target_cell)
-		elif job.type == "haul_rock":
+		elif job.type.begins_with("haul_"):
 			_haul.erase(job.target_cell)
+		elif job.type == "farm_harvest":
+			_farm_harvest.erase(job.target_cell)
 		return
 
 	# still-open jobs:
@@ -87,16 +92,19 @@ func _update_job(job: Job) -> void:
 	elif job.type == "assign_room":
 		_room_assign[job.target_cell] = job.status
 		return
+	elif job.type == "farm_harvest":
+		_farm_harvest[job.target_cell] = job.status
 	elif job.type == "unassign_room":
 		_room_unassign[job.target_cell] = job.status
 		return
-	elif job.type == "haul_rock":
-		# only show a haul ghost if the item still exists at that cell
-		if JobManager.has_ground_item(job.target_cell, "rock"):
-			_haul[job.target_cell] = job.status
+	elif job.type.begins_with("haul_"):
+		var kind: String = String(job.data.get("kind", "rock"))
+		if JobManager.has_ground_item(job.target_cell, kind):
+			_haul[job.target_cell] = {"status": job.status, "kind": kind}
 		else:
 			_haul.erase(job.target_cell)
 		return
+
 
 func _draw() -> void:
 	if _floor == null:
@@ -106,12 +114,13 @@ func _draw() -> void:
 	var half: Vector2 = size * 0.5
 
 	for key in _haul.keys():
-		var st: int = int(_haul[key])
+		var info: Dictionary = _haul[key]
+		var st: int = int(info.get("status", Job.Status.OPEN))
 		var ch: Color = color_haul
 		if st == Job.Status.RESERVED:
-			ch.a = ch.a * 0.6
+			ch.a *= 0.6
 		elif st == Job.Status.ACTIVE:
-			ch.a = ch.a * 0.9
+			ch.a *= 0.9
 		_draw_cell(key, size, half, ch)
 
 	for key in _dig.keys():
@@ -149,6 +158,15 @@ func _draw() -> void:
 		elif stu == Job.Status.ACTIVE:
 			cu.a = cu.a * 0.9
 		_draw_cell(key3, size, half, cu)
+		
+	for kf in _farm_harvest.keys():
+		var cf: Color = color_farm_harvest
+		var stf: int = int(_farm_harvest[kf])
+		if stf == Job.Status.RESERVED:
+			cf.a *= 0.6
+		elif stf == Job.Status.ACTIVE:
+			cf.a *= 0.9
+		_draw_cell(kf, size, half, cf)
 
 func _draw_cell(cell: Vector2i, size: Vector2, half: Vector2, fill: Color) -> void:
 	# convert cell -> this node's local space

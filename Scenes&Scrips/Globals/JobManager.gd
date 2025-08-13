@@ -7,8 +7,6 @@ signal job_completed(job: Job)
 @export var build_wall_source_id: int = 0
 @export var build_wall_atlas_coords: Vector2i = Vector2i(3, 11)
 @export var build_wall_alternative_tile: int = 0
-
-
 var jobs: Array[Job] = []
 var _next_id: int = 1
 
@@ -34,6 +32,11 @@ var treasury_reserved: int = 0	# slots reserved by in-flight haul jobs
 
 var items_layer: TileMapLayer
 
+# which kind this cell is currently stacking; "" = unassigned
+var treasury_stack_kind: Dictionary = {}				# cell(Vector2i) -> String
+# per-cell, per-kind reservations
+var treasury_reserved_per_cell_kind: Dictionary = {}	# cell -> {kind: int}
+
 # ground items: cell -> {"rock": count}
 
 # rock visuals
@@ -48,6 +51,18 @@ var treasury_contents: Dictionary = {}		# cell(Vector2i) -> {"rock": count}
 var treasury_reserved_per_cell: Dictionary = {}	# cell -> reserved slots
 signal items_changed(cell: Vector2i)
 
+@export var room_farm_source_id: int = -1
+@export var room_farm_atlas_coords: Vector2i = Vector2i.ZERO
+@export var room_farm_alt: int = 0
+
+
+@export var carrot_stack_max_per_cell: int = 12
+@export var carrot_source_id: int = -1
+@export var carrot_atlas_coords_0: Vector2i = Vector2i.ZERO
+@export var carrot_atlas_coords_1: Vector2i = Vector2i.ZERO
+@export var carrot_atlas_coords_2: Vector2i = Vector2i.ZERO
+@export var carrot_atlas_coords_3: Vector2i = Vector2i.ZERO
+@export var carrot_alt: int = 0
 
 # rock visuals (keep your existing vars)
 # @export var rock_stack_max_per_cell: int = 12
@@ -79,9 +94,39 @@ func _rebuild_treasury_cells() -> void:
 	for c: Vector2i in used:
 		treasury_cells[c] = true
 		if not treasury_contents.has(c):
-			treasury_contents[c] = {"rock": 0}
+			treasury_contents[c] = {"rock": 0, "carrot": 0}
 		if not treasury_reserved_per_cell.has(c):
-			treasury_reserved_per_cell[c] = 0
+			treasury_reserved_per_cell[c] = 0	# legacy counter (kept if you still use it)
+		if not treasury_reserved_per_cell_kind.has(c):
+			treasury_reserved_per_cell_kind[c] = {}
+		if not treasury_stack_kind.has(c):
+			treasury_stack_kind[c] = ""			# unassigned
+			
+func _treasury_assigned_kind(cell: Vector2i) -> String:
+	return String(treasury_stack_kind.get(cell, ""))
+
+func _cell_stored_kind(cell: Vector2i, kind: String) -> int:
+	if not treasury_contents.has(cell):
+		return 0
+	return int((treasury_contents[cell] as Dictionary).get(kind, 0))
+
+func _cell_reserved_kind(cell: Vector2i, kind: String) -> int:
+	var bucket: Dictionary = treasury_reserved_per_cell_kind.get(cell, {})
+	return int(bucket.get(kind, 0))
+
+func _cell_free_effective_kind(cell: Vector2i, kind: String) -> int:
+	# if this cell already stacks another kind, it's not eligible
+	var assigned: String = _treasury_assigned_kind(cell)
+	if assigned != "" and assigned != kind:
+		return 0
+	return _cell_capacity(cell) - _cell_stored_kind(cell, kind) - _cell_reserved_kind(cell, kind)
+
+func _any_treasury_space_available_for(kind: String) -> bool:
+	for k in treasury_cells.keys():
+		if _cell_free_effective_kind(k, kind) > 0:
+			return true
+	return false
+
 
 func _cell_capacity(cell: Vector2i) -> int:
 	return treasury_capacity_per_tile
@@ -141,36 +186,40 @@ func take_item(cell: Vector2i, kind: String, count: int) -> bool:
 	items_changed.emit(cell)
 	return true
 
-func find_nearest_reachable_treasury_cell_with_space(from_cell: Vector2i) -> Variant:
+func _nearest_reachable_treasury_with_space_for(from_cell: Vector2i, kind: String) -> Variant:
 	var found: bool = false
 	var best_cell: Vector2i = Vector2i.ZERO
 	var best_steps: int = 0
 	for key in treasury_cells.keys():
 		var tcell: Vector2i = key
-		if _cell_free_effective(tcell) <= 0:
+		if _cell_free_effective_kind(tcell, kind) <= 0:
 			continue
 		var path: PackedVector2Array = GridNav.find_path_cells(from_cell, tcell)
-		if not path.is_empty():
-			var steps: int = max(0, path.size() - 1)
-			if not found or steps < best_steps:
-				found = true
-				best_steps = steps
-				best_cell = tcell
+		if path.is_empty():
+			continue
+		var steps: int = max(0, path.size() - 1)
+		if not found or steps < best_steps:
+			found = true
+			best_steps = steps
+			best_cell = tcell
 	if found:
 		return best_cell
 	return null
 
-func _reserve_treasury_cell(cell: Vector2i) -> void:
-	var cur: int = int(treasury_reserved_per_cell.get(cell, 0))
-	treasury_reserved_per_cell[cell] = cur + 1
+func _reserve_treasury_cell(cell: Vector2i, kind: String) -> void:
+	var bucket: Dictionary = treasury_reserved_per_cell_kind.get(cell, {})
+	var cur: int = int(bucket.get(kind, 0))
+	bucket[kind] = cur + 1
+	treasury_reserved_per_cell_kind[cell] = bucket
 	treasury_reserved += 1
 
-func _release_treasury_cell(cell: Vector2i) -> void:
+func _release_treasury_cell(cell: Vector2i, kind: String) -> void:
 	if treasury_reserved > 0:
 		treasury_reserved -= 1
-	var cur: int = int(treasury_reserved_per_cell.get(cell, 0))
-	treasury_reserved_per_cell[cell] = max(0, cur - 1)
-
+	var bucket: Dictionary = treasury_reserved_per_cell_kind.get(cell, {})
+	var cur: int = int(bucket.get(kind, 0))
+	bucket[kind] = max(0, cur - 1)
+	treasury_reserved_per_cell_kind[cell] = bucket
 
 func create_haul_job(cell: Vector2i, kind: String) -> Job:
 	if not has_ground_item(cell, kind):
@@ -178,7 +227,7 @@ func create_haul_job(cell: Vector2i, kind: String) -> Job:
 	var j: Job = Job.new()
 	j.id = _next_id
 	_next_id += 1
-	j.type = "haul_rock"
+	j.type = "haul_" + kind
 	j.target_cell = cell
 	j.data["kind"] = kind
 	j.data["count"] = 1
@@ -187,15 +236,29 @@ func create_haul_job(cell: Vector2i, kind: String) -> Job:
 	return j
 
 func ensure_haul_job(cell: Vector2i, kind: String) -> void:
-	if has_job_at(cell, "haul_rock"):
+	if get_job_at(cell, "haul_" + kind) != null:
 		return
 	if has_ground_item(cell, kind):
 		create_haul_job(cell, kind)
 
 func remove_haul_job_at(cell: Vector2i) -> void:
-	var j: Job = get_job_at(cell, "haul_rock")
-	if j != null and (j.status == Job.Status.OPEN or j.status == Job.Status.RESERVED):
-		cancel_job(j)
+	for j: Job in jobs:
+		if j.target_cell == cell and j.type.begins_with("haul_") and (j.status == Job.Status.OPEN or j.status == Job.Status.RESERVED):
+			cancel_job(j)
+			return
+
+func has_farm_harvest_job(cell: Vector2i) -> bool:
+	return get_job_at(cell, "farm_harvest") != null
+
+func ensure_farm_harvest_job(cell: Vector2i) -> void:
+	if not has_farm_harvest_job(cell):
+		var j: Job = Job.new()
+		j.id = _next_id
+		_next_id += 1
+		j.type = "farm_harvest"
+		j.target_cell = cell
+		jobs.append(j)
+		job_added.emit(j)
 
 func create_dig_job(cell: Vector2i) -> Job:
 	if walls_layer == null:
@@ -218,10 +281,12 @@ func create_dig_job(cell: Vector2i) -> Job:
 func request_job(worker: Node2D) -> Job:
 	for j: Job in jobs:
 		if j.is_open():
-			if j.type == "haul_rock":
-				if not _any_treasury_space_available():
+			if j.type.begins_with("haul_"):
+				var kind: String = String(j.data.get("kind", "rock"))
+
+				if not _any_treasury_space_available_for(kind):
 					continue
-				if not has_ground_item(j.target_cell, "rock"):
+				if not has_ground_item(j.target_cell, kind):
 					j.status = Job.Status.CANCELLED
 					job_updated.emit(j)
 					continue
@@ -234,13 +299,10 @@ func request_job(worker: Node2D) -> Job:
 				var depot_cell: Vector2i
 				if j.data.has("deposit_cell"):
 					depot_cell = j.data["deposit_cell"] as Vector2i
-					# ensure still valid + has effective space
-					if not treasury_cells.has(depot_cell):
-						continue
-					if _cell_free_effective(depot_cell) <= 0:
+					if _cell_free_effective_kind(depot_cell, kind) <= 0:
 						continue
 				else:
-					var depot_variant = find_best_deposit_cell_for_item(j.target_cell, "rock")
+					var depot_variant = find_best_deposit_cell_for_item(j.target_cell, kind)
 					if depot_variant == null:
 						continue
 					depot_cell = depot_variant as Vector2i
@@ -248,7 +310,7 @@ func request_job(worker: Node2D) -> Job:
 
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
-				_reserve_treasury_cell(depot_cell)
+				_reserve_treasury_cell(depot_cell, kind)
 				job_updated.emit(j)
 				return j
 
@@ -293,65 +355,96 @@ func complete_job(job: Job) -> void:
 			GridNav.astar.set_point_solid(job.target_cell, true)
 
 	elif job.type == "assign_room":
-		_ensure_room_tile_defaults(job.data.get("room_kind", "treasury"))
-		if room_treasury_source_id == -1:
-			push_error("JobManager: room_treasury_source_id not set and no sample room tile found.")
+		var kind: String = job.data.get("room_kind", "treasury")
+		if kind == "treasury":
+			_ensure_room_tile_defaults("treasury")
+			if room_treasury_source_id == -1:
+				push_error("JobManager: room_treasury_source_id not set and no sample room tile found.")
+			else:
+				rooms_layer.set_cell(job.target_cell, room_treasury_source_id, room_treasury_atlas_coords, room_treasury_alt)
+				treasury_cells[job.target_cell] = true
+				if not treasury_contents.has(job.target_cell):
+					treasury_contents[job.target_cell] = {"rock": 0, "carrot": 0}
+				if not treasury_reserved_per_cell.has(job.target_cell):
+					treasury_reserved_per_cell[job.target_cell] = 0
+				_refresh_item_cell_visual(job.target_cell)
+				treasury_stack_kind[job.target_cell] = ""
+
+				# housekeeping: sweep existing rocks under this new treasury
+				var ground_here: int = 0
+				if items_on_ground.has(job.target_cell):
+					var bucket_here: Dictionary = items_on_ground[job.target_cell]
+					ground_here = int(bucket_here.get("rock", 0))
+				if ground_here > 0:
+					var area: Array[Vector2i] = _treasury_area_from(job.target_cell)
+					var free_total: int = 0
+					for cell_in_area: Vector2i in area:
+						free_total += max(0, _cell_free_effective(cell_in_area))
+					var to_queue: int = min(ground_here, free_total)
+					for i in range(to_queue):
+						create_haul_job(job.target_cell, "rock")
 		else:
-			rooms_layer.set_cell(job.target_cell, room_treasury_source_id, room_treasury_atlas_coords, room_treasury_alt)
-			treasury_cells[job.target_cell] = true
-			if not treasury_contents.has(job.target_cell):
-				treasury_contents[job.target_cell] = {"rock": 0}
-			if not treasury_reserved_per_cell.has(job.target_cell):
-				treasury_reserved_per_cell[job.target_cell] = 0
-			_refresh_item_cell_visual(job.target_cell)
+			# FARM
+			if room_farm_source_id == -1:
+				# fallback to treasury tile if you haven't set a farm tile yet
+				rooms_layer.set_cell(job.target_cell, room_treasury_source_id, room_treasury_atlas_coords, room_treasury_alt)
+			else:
+				rooms_layer.set_cell(job.target_cell, room_farm_source_id, room_farm_atlas_coords, room_farm_alt)
+			FarmSystem.add_plot(job.target_cell)
 
-			# --- HOUSEKEEPING: auto-sweep rocks that already sit on this tile ---
-			# We DO NOT pin a deposit cell; assignment will choose the best stack
-			var ground_here: int = 0
-			if items_on_ground.has(job.target_cell):
-				var bucket_here: Dictionary = items_on_ground[job.target_cell]
-				ground_here = int(bucket_here.get("rock", 0))
-
-			if ground_here > 0:
-				# compute total free space across the *connected* treasury area
-				var area: Array[Vector2i] = _treasury_area_from(job.target_cell)
-				var free_total: int = 0
-				for cell_in_area: Vector2i in area:
-					free_total += max(0, _cell_free_effective(cell_in_area))
-
-				var to_queue: int = min(ground_here, free_total)
-				for i in range(to_queue):
-					# create a normal haul job from this tile; deposit will be chosen later
-					create_haul_job(job.target_cell, "rock")
 
 	elif job.type == "unassign_room":
-		# spill stored rocks back onto the ground at this cell, then remove room
 		if rooms_layer != null:
-			var stored: int = _cell_stored(job.target_cell)
-			if stored > 0:
-				drop_item(job.target_cell, "rock", stored)
-				if treasury_contents.has(job.target_cell):
-					var bucket: Dictionary = treasury_contents[job.target_cell]
-					if bucket.has("rock"):
-						bucket["rock"] = 0
-						treasury_contents[job.target_cell] = bucket
+			# remove the room tile first
 			rooms_layer.erase_cell(job.target_cell)
-			_refresh_item_cell_visual(job.target_cell)
+
+			# spill EVERYTHING stored on this treasury cell back onto the ground
+			if treasury_contents.has(job.target_cell):
+				var bucket: Dictionary = treasury_contents[job.target_cell]
+				for k in bucket.keys():
+					var cnt: int = int(bucket[k])
+					if cnt > 0:
+						drop_item(job.target_cell, String(k), cnt)
+						bucket[k] = 0
+				treasury_contents[job.target_cell] = bucket
+
+			# clean up all treasury maps for this cell
 			treasury_cells.erase(job.target_cell)
 			treasury_reserved_per_cell.erase(job.target_cell)
+			treasury_reserved_per_cell_kind.erase(job.target_cell)
+			treasury_stack_kind.erase(job.target_cell)
 
-	elif job.type == "haul_rock":
+			# if you support farms on this tile too, remove the plot
+			FarmSystem.remove_plot(job.target_cell)
+
+			# redraw items layer for this cell after spilling
+			_refresh_item_cell_visual(job.target_cell)
+
+	elif job.type.begins_with("haul_"):
+		var kind: String = String(job.data.get("kind", "rock"))
 		if job.data.has("deposit_cell"):
 			var depot_cell: Vector2i = job.data["deposit_cell"] as Vector2i
-			_release_treasury_cell(depot_cell)
-			_add_treasury_item(depot_cell, "rock", int(job.data.get("count", 1)))
+			_release_treasury_cell(depot_cell, kind)
+			# lock the cell to this kind once we store here
+			if _treasury_assigned_kind(depot_cell) == "":
+				treasury_stack_kind[depot_cell] = kind
+			_add_treasury_item(depot_cell, kind, int(job.data.get("count", 1)))
 		else:
-			# fallback only if older jobs exist with no deposit set
-			#var depot = find_nearest_reachable_treasury_cell_with_space(job.target_cell)
-			var depot = find_best_deposit_cell_for_item(job.target_cell, "rock")
-
+			var depot = find_best_deposit_cell_for_item(job.target_cell, kind)
 			if depot != null:
-				_add_treasury_item(depot as Vector2i, "rock", int(job.data.get("count", 1)))
+				var dc: Vector2i = depot as Vector2i
+				if _treasury_assigned_kind(dc) == "":
+					treasury_stack_kind[dc] = kind
+				_add_treasury_item(dc, kind, int(job.data.get("count", 1)))
+
+
+
+	elif job.type == "farm_harvest":
+		var drop: int = FarmSystem.on_harvest_completed(job.target_cell)	# 1 or 2
+		if drop > 0:
+			drop_item(job.target_cell, "carrot", drop)
+			for i in range(drop):
+				create_haul_job(job.target_cell, "carrot")
 
 	job.status = Job.Status.DONE
 	job_completed.emit(job)
@@ -395,25 +488,20 @@ func _treasury_area_from(seed: Vector2i) -> Array[Vector2i]:
 	return out
 
 func find_best_deposit_cell_for_item(from_cell: Vector2i, kind: String) -> Variant:
-	# Seed = nearest reachable treasury tile with any space
-	var seed_variant = _nearest_reachable_treasury_with_space(from_cell)
+	var seed_variant = _nearest_reachable_treasury_with_space_for(from_cell, kind)
 	if seed_variant == null:
 		return null
 	var seed: Vector2i = seed_variant as Vector2i
-
-	# Work inside the connected area of that seed
 	var area: Array[Vector2i] = _treasury_area_from(seed)
 
-	# 1) prefer partially filled stacks with free space (compaction)
+	# 1) nearest partially-filled stack of this kind
 	var found: bool = false
 	var best_cell: Vector2i = Vector2i.ZERO
 	var best_steps: int = 0
 	for cell: Vector2i in area:
-		var free: int = _cell_free_effective(cell)
-		if free <= 0:
+		if _cell_stored_kind(cell, kind) <= 0:
 			continue
-		var stored: int = _cell_stored(cell)
-		if stored <= 0:
+		if _cell_free_effective_kind(cell, kind) <= 0:
 			continue
 		var path1: PackedVector2Array = GridNav.find_path_cells(from_cell, cell)
 		if path1.is_empty():
@@ -426,11 +514,10 @@ func find_best_deposit_cell_for_item(from_cell: Vector2i, kind: String) -> Varia
 	if found:
 		return best_cell
 
-	# 2) otherwise nearest with space in the same area
+	# 2) nearest eligible empty/unassigned cell
 	found = false
 	for cell2: Vector2i in area:
-		var free2: int = _cell_free_effective(cell2)
-		if free2 <= 0:
+		if _cell_free_effective_kind(cell2, kind) <= 0:
 			continue
 		var path2: PackedVector2Array = GridNav.find_path_cells(from_cell, cell2)
 		if path2.is_empty():
@@ -443,9 +530,8 @@ func find_best_deposit_cell_for_item(from_cell: Vector2i, kind: String) -> Varia
 	if found:
 		return best_cell
 
-	# 3) absolute fallback across all treasury
-	return _nearest_reachable_treasury_with_space(from_cell)
-
+	# 3) global fallback (kind-aware)
+	return _nearest_reachable_treasury_with_space_for(from_cell, kind)
 
 func _find_reachable_adjacent(worker: Node2D, target_cell: Vector2i) -> Variant:
 	if floor_layer == null:
@@ -614,11 +700,10 @@ func _ensure_room_tile_defaults(room_kind: String) -> void:
 func reopen_job(job: Job) -> void:
 	if job == null:
 		return
-	if job.type == "haul_rock" and job.data.has("deposit_cell"):
-		_release_treasury_cell(job.data["deposit_cell"])
-	# NEW: show ghost again if we put the rock back
-	if job.type == "haul_rock" and job.data.has("picked_up"):
-		job.data["picked_up"] = false
+	if job.type.begins_with("haul_") and job.data.has("deposit_cell"):
+		var kind: String = String(job.data.get("kind", "rock"))
+		_release_treasury_cell(job.data["deposit_cell"] as Vector2i, kind)
+		job.data.erase("deposit_cell")
 	job.status = Job.Status.OPEN
 	job.reserved_by = NodePath("")
 	job_updated.emit(job)
@@ -626,8 +711,9 @@ func reopen_job(job: Job) -> void:
 func cancel_job(job: Job) -> void:
 	if job == null:
 		return
-	if job.type == "haul_rock" and job.data.has("deposit_cell"):
-		_release_treasury_cell(job.data["deposit_cell"] as Vector2i)
+	if job.type.begins_with("haul_") and job.data.has("deposit_cell"):
+		var kind: String = String(job.data.get("kind", "rock"))
+		_release_treasury_cell(job.data["deposit_cell"] as Vector2i, kind)
 		job.data.erase("deposit_cell")
 	job.status = Job.Status.CANCELLED
 	job_updated.emit(job)
@@ -637,29 +723,87 @@ func _refresh_item_cell_visual(cell: Vector2i) -> void:
 	if items_layer == null:
 		return
 
-	var ground: int = 0
-	if items_on_ground.has(cell):
-		ground = int((items_on_ground[cell] as Dictionary).get("rock", 0))
-	var stored: int = _cell_stored(cell)
+	var show_kind: String = ""
+	var total: int = 0
 
-	var count: int = ground + stored
-	if count <= 0:
+	if treasury_cells.has(cell):
+		var assigned: String = _treasury_assigned_kind(cell)
+		if assigned != "":
+			# show the assigned stack only
+			total = _cell_stored_kind(cell, assigned)
+			# optionally include ground of same kind for continuity
+			var ground_bucket: Dictionary = items_on_ground.get(cell, {})
+			total += int(ground_bucket.get(assigned, 0))
+			show_kind = assigned
+		else:
+			# unassigned treasury: show whichever stored kind is non-zero (if any)
+			var bucket: Dictionary = treasury_contents.get(cell, {})
+			for k in bucket.keys():
+				var cnt: int = int(bucket[k])
+				if cnt > 0:
+					show_kind = String(k)
+					total = cnt
+					break
+			if show_kind == "":
+				# fall back to ground items (pick largest)
+				var gb: Dictionary = items_on_ground.get(cell, {})
+				var best_cnt: int = 0
+				for gk in gb.keys():
+					var c: int = int(gb[gk])
+					if c > best_cnt:
+						best_cnt = c
+						show_kind = String(gk)
+				total = best_cnt
+	else:
+		# non-treasury: pick the largest pile visually (ground only + any stored just in case)
+		var gb2: Dictionary = items_on_ground.get(cell, {})
+		var best2: int = 0
+		for gk2 in gb2.keys():
+			var c2: int = int(gb2[gk2])
+			if c2 > best2:
+				best2 = c2
+				show_kind = String(gk2)
+		total = best2
+
+	if total <= 0 or show_kind == "":
 		items_layer.erase_cell(cell)
 		return
 
-	if rock_source_id == -1:
-		return
+	if show_kind == "rock":
+		if rock_source_id == -1:
+			return
+		var idx_r: int = _index_for_count(total, rock_stack_max_per_cell)
+		var atlas_r: Vector2i = [rock_atlas_coords_0, rock_atlas_coords_1, rock_atlas_coords_2, rock_atlas_coords_3][idx_r]
+		items_layer.set_cell(cell, rock_source_id, atlas_r, rock_alt)
+	elif show_kind == "carrot":
+		if carrot_source_id == -1:
+			return
+		var idx_c: int = _index_for_count(total, carrot_stack_max_per_cell)
+		var atlas_c: Vector2i = [carrot_atlas_coords_0, carrot_atlas_coords_1, carrot_atlas_coords_2, carrot_atlas_coords_3][idx_c]
+		items_layer.set_cell(cell, carrot_source_id, atlas_c, carrot_alt)
 
-	var idx: int = _rock_index_for_count(count)
-	var atlas: Vector2i = rock_atlas_coords_0
-	if idx == 1:
-		atlas = rock_atlas_coords_1
-	elif idx == 2:
-		atlas = rock_atlas_coords_2
-	elif idx == 3:
-		atlas = rock_atlas_coords_3
+func _index_for_count(count: int, max_per_cell: int) -> int:
+	var maxv: int = max(1, max_per_cell)
+	var r: float = float(count) / float(maxv)
+	if r <= 0.25:
+		return 0
+	elif r <= 0.5:
+		return 1
+	elif r <= 0.75:
+		return 2
+	else:
+		return 3
 
-	items_layer.set_cell(cell, rock_source_id, atlas, rock_alt)
+
+func _add_treasury_item(cell: Vector2i, kind: String, count: int) -> void:
+	if not treasury_contents.has(cell):
+		treasury_contents[cell] = {}
+	var bucket: Dictionary = treasury_contents[cell]
+	var cur: int = int(bucket.get(kind, 0))
+	bucket[kind] = cur + count
+	treasury_contents[cell] = bucket
+	_refresh_item_cell_visual(cell)
+
 
 func create_haul_job_to(source_cell: Vector2i, kind: String, deposit_cell: Vector2i) -> Job:
 	if not has_ground_item(source_cell, kind):
@@ -677,15 +821,6 @@ func create_haul_job_to(source_cell: Vector2i, kind: String, deposit_cell: Vecto
 	jobs.append(j)
 	job_added.emit(j)
 	return j
-
-func _add_treasury_item(cell: Vector2i, kind: String, count: int) -> void:
-	if not treasury_contents.has(cell):
-		treasury_contents[cell] = {}
-	var bucket: Dictionary = treasury_contents[cell]
-	var cur: int = int(bucket.get(kind, 0))
-	bucket[kind] = cur + count
-	treasury_contents[cell] = bucket
-	_refresh_item_cell_visual(cell)
 
 func _rock_index_for_count(count: int) -> int:
 	var maxv: int = max(1, rock_stack_max_per_cell)

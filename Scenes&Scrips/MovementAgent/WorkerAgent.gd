@@ -13,6 +13,8 @@ var _rng := RandomNumberGenerator.new()
 var _current_job: Job = null
 var _idling := true
 
+@export var carry_capacity: int = 2
+
 const DIR4 := [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]
 
 func _ready():
@@ -61,7 +63,7 @@ func _idle_shuffle():
 
 func _go_do_job(job: Job) -> void:
 	
-	if job.type == "haul_rock":
+	if job.type.begins_with("haul_"):
 		await _do_haul(job)
 		return
 	
@@ -105,13 +107,15 @@ func _go_do_job(job: Job) -> void:
 	_current_job = null
 
 func _do_haul(job: Job) -> void:
+	var kind: String = String(job.data.get("kind", "rock"))
+
 	# still there?
-	if not JobManager.has_ground_item(job.target_cell, "rock"):
+	if not JobManager.has_ground_item(job.target_cell, kind):
 		JobManager.cancel_job(job)
 		_current_job = null
 		return
 
-	# go to item
+	# go to item cell
 	_agent.set_destination_cell(job.target_cell)
 	await _agent.arrived
 	var here: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
@@ -120,27 +124,24 @@ func _do_haul(job: Job) -> void:
 		_current_job = null
 		return
 
-	# pick up one
-	var ok: bool = JobManager.take_item(job.target_cell, "rock", 1)
+	# pick up one unit of that kind
+	var ok: bool = JobManager.take_item(job.target_cell, kind, 1)
 	if not ok:
 		JobManager.cancel_job(job)
 		_current_job = null
 		return
 
-	# must have a pre-assigned deposit cell; do NOT re-pick
+	# deposit cell must be preassigned by JobManager.request_job
 	if not job.data.has("deposit_cell"):
 		# put it back so the ghost reappears
-		JobManager.drop_item(here, "rock", 1)
+		JobManager.drop_item(here, kind, 1)
 		JobManager.reopen_job(job)
 		_current_job = null
 		return
 
 	var depot_cell: Vector2i = job.data["deposit_cell"] as Vector2i
-
-	# sanity: deposit cell must still be a treasury cell with capacity reserved
 	if not JobManager.treasury_cells.has(depot_cell):
-		# treasury changed; revert pickup and reopen
-		JobManager.drop_item(here, "rock", 1)
+		JobManager.drop_item(here, kind, 1)
 		JobManager.reopen_job(job)
 		_current_job = null
 		return
@@ -150,13 +151,12 @@ func _do_haul(job: Job) -> void:
 	await _agent.arrived
 	var at_depot: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
 	if at_depot != depot_cell:
-		# couldn't reach (map changed); revert pickup and reopen
-		JobManager.drop_item(here, "rock", 1)
+		JobManager.drop_item(here, kind, 1)
 		JobManager.reopen_job(job)
 		_current_job = null
 		return
 
-	# complete (will add to EXACT depot_cell and refresh visuals)
+	# finish (JobManager will add to EXACT depot_cell + refresh visuals)
 	JobManager.complete_job(job)
 	_current_job = null
 
