@@ -437,10 +437,8 @@ func complete_job(job: Job) -> void:
 					treasury_stack_kind[dc] = kind
 				_add_treasury_item(dc, kind, int(job.data.get("count", 1)))
 
-
-
 	elif job.type == "farm_harvest":
-		var drop: int = FarmSystem.on_harvest_completed(job.target_cell)	# 1 or 2
+		var drop: int = FarmSystem.on_harvest_completed(job.target_cell)	# now 1 or 2 based on auto_replant
 		if drop > 0:
 			drop_item(job.target_cell, "carrot", drop)
 			for i in range(drop):

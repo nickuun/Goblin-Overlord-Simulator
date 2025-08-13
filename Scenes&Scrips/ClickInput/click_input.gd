@@ -63,7 +63,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			var cellc: Vector2i = GridNav.world_to_cell(get_global_mouse_position(), _floor)
 			if FarmSystem.has_plot(cellc):
 				FarmSystem.set_crop(cellc, "carrot")
-				print("Set crop at ", cellc, " to carrot")
+				FarmSystem.plant_plot(cellc)	# ensure it’s planted again
+				print("Planted carrot at ", cellc)
 
 	if event is InputEventMouseButton:
 		var ev: InputEventMouseButton = event

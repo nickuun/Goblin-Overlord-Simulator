@@ -9,6 +9,7 @@ var plots: Dictionary = {}	# cell -> {crop:String, growth:float, mature:bool, au
 func add_plot(cell: Vector2i) -> void:
 	var p := {}
 	p["crop"] = "carrot"
+	p["planted"] = true
 	p["growth"] = 0.0
 	p["mature"] = false
 	p["auto_harvest"] = true
@@ -51,13 +52,19 @@ func on_harvest_completed(cell: Vector2i) -> int:
 		return 0
 	var p: Dictionary = plots[cell]
 	var drop_count: int = 2
+
 	if bool(p.get("auto_replant", true)):
-		drop_count -= 1
+		# keep plot planted; replant consumes one
+		drop_count = 1
+		p["planted"] = true
 		p["growth"] = 0.0
 		p["mature"] = false
 	else:
+		# no replant: both carrots drop and the plot goes fallow (no more growth)
+		p["planted"] = false
 		p["growth"] = 0.0
 		p["mature"] = false
+
 	plots[cell] = p
 	plot_updated.emit(cell)
 	return drop_count
@@ -66,6 +73,9 @@ func _process(delta: float) -> void:
 	var matured: Array[Vector2i] = []
 	for cell in plots.keys():
 		var p: Dictionary = plots[cell]
+		# do not grow if nothing is planted
+		if not bool(p.get("planted", true)):
+			continue
 		if not bool(p.get("mature", false)):
 			p["growth"] = float(p.get("growth", 0.0)) + delta / seconds_to_mature
 			if float(p["growth"]) >= 1.0:
@@ -77,3 +87,12 @@ func _process(delta: float) -> void:
 		var pp: Dictionary = plots[c]
 		if bool(pp.get("auto_harvest", true)):
 			JobManager.ensure_farm_harvest_job(c)
+
+func plant_plot(cell: Vector2i) -> void:
+	if plots.has(cell):
+		var p: Dictionary = plots[cell]
+		p["planted"] = true
+		p["growth"] = 0.0
+		p["mature"] = false
+		plots[cell] = p
+		plot_updated.emit(cell)
