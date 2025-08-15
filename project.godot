@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 GridNav="*res://Scenes&Scrips/Globals/GridNav.gd"
 JobManager="*res://Scenes&Scrips/Globals/JobManager.gd"
 FarmSystem="*res://Scenes&Scrips/Globals/FarmSystem.gd"
+DevUI="*res://Scenes&Scrips/Globals/DevUI.gd"
 
 [display]
 

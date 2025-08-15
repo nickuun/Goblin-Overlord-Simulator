@@ -63,11 +63,22 @@ signal items_changed(cell: Vector2i)
 @export var carrot_atlas_coords_3: Vector2i = Vector2i.ZERO
 @export var carrot_alt: int = 0
 
+signal inventory_changed()
+
+var treasury_cell_area_id: Dictionary = {}				# cell -> area_id
+var area_id_cells: Dictionary = {}						# area_id -> Array[Vector2i]
+var treasury_area_rules: Dictionary = {}				# area_id -> {"any":bool,"allowed":Array[String]}
+var _prev_cell_area_id: Dictionary = {}					# for merging rule carry-over
+
 # rock visuals (keep your existing vars)
 # @export var rock_stack_max_per_cell: int = 12
 # @export var rock_source_id: int = -1
 # @export var rock_atlas_coords_0..3, rock_alt
 
+func _ready() -> void:
+	var ui := get_node_or_null("/root/DevUI")
+	if ui != null:
+		ui.treasury_rules_changed.connect(on_treasury_rules_changed_from_ui)
 
 func init(floor: TileMapLayer, walls: TileMapLayer, rooms: TileMapLayer, items: TileMapLayer) -> void:
 	floor_layer = floor
@@ -76,6 +87,8 @@ func init(floor: TileMapLayer, walls: TileMapLayer, rooms: TileMapLayer, items: 
 	items_layer = items
 	_rebuild_treasury_cells()
 	treasury_reserved = 0
+	_recompute_treasury_areas()
+
 
 func set_rock_tiles(source_id: int, a0: Vector2i, a1: Vector2i, a2: Vector2i, a3: Vector2i, alternative: int) -> void:
 	rock_source_id = source_id
@@ -109,6 +122,153 @@ func _rebuild_treasury_cells() -> void:
 		if not treasury_stack_kind.has(c):
 			treasury_stack_kind[c] = ""			# unassigned
 			
+func get_inventory_totals() -> Dictionary:
+	var out := {"rock": 0, "carrot": 0}
+	for c in treasury_contents.keys():
+		var bucket: Dictionary = treasury_contents[c]
+		for k in bucket.keys():
+			out[k] = int(out.get(k, 0)) + int(bucket[k])
+	return out
+
+func is_treasury_cell(cell: Vector2i) -> bool:
+	return treasury_cells.has(cell)
+	
+func get_cell_inspect_text(cell: Vector2i) -> String:
+	var gb: Dictionary = items_on_ground.get(cell, {})
+	var g_rock := int(gb.get("rock", 0))
+	var g_carrot := int(gb.get("carrot", 0))
+
+	var s_rock := 0
+	var s_carrot := 0
+	if treasury_cells.has(cell):
+		s_rock = _cell_stored_kind(cell, "rock")
+		s_carrot = _cell_stored_kind(cell, "carrot")
+
+	var stack_kind := _treasury_assigned_kind(cell) if treasury_cells.has(cell) else ""
+	var area_id := int(treasury_cell_area_id.get(cell, -1))
+	var parts := []
+	if g_rock > 0 or g_carrot > 0:
+		parts.append("Ground R:%d C:%d" % [g_rock, g_carrot])
+	if s_rock > 0 or s_carrot > 0 or treasury_cells.has(cell):
+		parts.append("Stored R:%d C:%d" % [s_rock, s_carrot])
+	if stack_kind != "":
+		parts.append("Stack:%s" % stack_kind)
+	if area_id != -1:
+		parts.append("Area:%d" % area_id)
+	if parts.size() == 0:
+		return "Empty"
+	return " | ".join(parts)
+
+func _area_allows(cell: Vector2i, kind: String) -> bool:
+	var aid := int(treasury_cell_area_id.get(cell, -1))
+	if aid == -1:
+		return true
+	var rule: Dictionary = treasury_area_rules.get(aid, {"any": true, "allowed": PackedStringArray()})
+	if bool(rule.get("any", true)):
+		return true
+	var psa: PackedStringArray = rule.get("allowed", PackedStringArray())
+	for s in psa:
+		if String(s) == kind:
+			return true
+	return false
+
+func get_treasury_rules_for_cell(cell: Vector2i) -> Dictionary:
+	var aid := int(treasury_cell_area_id.get(cell, -1))
+	if aid == -1:
+		return {"any": true, "allowed": [] as Array[String]}
+	var r: Dictionary = treasury_area_rules.get(aid, {"any": true, "allowed": PackedStringArray()})
+	var psa: PackedStringArray = r.get("allowed", PackedStringArray())
+	var arr: Array[String] = []
+	for s in psa:
+		arr.append(String(s))
+	return {"any": bool(r.get("any", true)), "allowed": arr}
+
+func _recompute_treasury_areas() -> void:
+	_prev_cell_area_id = treasury_cell_area_id.duplicate()
+	treasury_cell_area_id.clear()
+	area_id_cells.clear()
+
+	# flood fill across all treasury cells
+	var seen := {}
+	var area_next: int = 1
+	for c in treasury_cells.keys():
+		if seen.has(c):
+			continue
+		var cells := _treasury_area_from(c)
+		for cc in cells:
+			seen[cc] = true
+			treasury_cell_area_id[cc] = area_next
+		area_id_cells[area_next] = cells.duplicate()
+		area_next += 1
+
+	# carry over rules: for each new area, pick dominant previous area rules
+	var new_rules := {}
+	for aid in area_id_cells.keys():
+		var cells2: Array[Vector2i] = area_id_cells[aid]
+		var counts := {}
+		for cc in cells2:
+			var old := int(_prev_cell_area_id.get(cc, -1))
+			if old != -1:
+				counts[old] = int(counts.get(old, 0)) + 1
+		var picked_old: int = -1
+		var best := -1
+		for k in counts.keys():
+			var cnt := int(counts[k])
+			if cnt > best:
+				best = cnt
+				picked_old = int(k)
+		if picked_old != -1 and treasury_area_rules.has(picked_old):
+			var oldr: Dictionary = treasury_area_rules[picked_old]
+			var old_any: bool = bool(oldr.get("any", true))
+			var old_psa: PackedStringArray = oldr.get("allowed", PackedStringArray())
+			new_rules[aid] = {"any": old_any, "allowed": PackedStringArray(old_psa)}
+		else:
+			new_rules[aid] = {"any": true, "allowed": PackedStringArray()}
+	treasury_area_rules = new_rules
+
+
+func _enforce_area_rules(aid: int) -> void:
+	var cells: Array[Vector2i] = area_id_cells.get(aid, [])
+	if cells.size() == 0:
+		return
+	for cell in cells:
+		if treasury_contents.has(cell):
+			var bucket: Dictionary = treasury_contents[cell]
+			for k in bucket.keys():
+				var kind := String(k)
+				var cnt := int(bucket[k])
+				if cnt <= 0:
+					continue
+				var rule = treasury_area_rules.get(aid, {"any": true, "allowed": []})
+				var any_allowed := bool(rule.get("any", true))
+				var allowed_arr: Array = rule.get("allowed", [])
+				var allowed := any_allowed or allowed_arr.has(kind)
+				if not allowed:
+					# spill to ground and queue hauls (they'll pick allowed areas)
+					drop_item(cell, kind, cnt)
+					bucket[kind] = 0
+					for i in range(cnt):
+						create_haul_job(cell, kind)
+			treasury_contents[cell] = bucket
+	_refresh_item_cell_visuals_for_area(aid)
+	inventory_changed.emit()
+	
+func on_treasury_rules_changed_from_ui(cell: Vector2i, any_allowed: bool, allowed: Array[String]) -> void:
+	var aid := int(treasury_cell_area_id.get(cell, -1))
+	if aid == -1:
+		return
+	var psa := PackedStringArray()
+	for s in allowed:
+		psa.append(String(s))
+	treasury_area_rules[aid] = {"any": any_allowed, "allowed": psa}
+	_enforce_area_rules(aid)
+
+func _refresh_item_cell_visuals_for_area(aid: int) -> void:
+	var cells: Array[Vector2i] = area_id_cells.get(aid, [])
+	for c in cells:
+		_refresh_item_cell_visual(c)
+
+
 func _treasury_assigned_kind(cell: Vector2i) -> String:
 	return String(treasury_stack_kind.get(cell, ""))
 
@@ -122,9 +282,10 @@ func _cell_reserved_kind(cell: Vector2i, kind: String) -> int:
 	return int(bucket.get(kind, 0))
 
 func _cell_free_effective_kind(cell: Vector2i, kind: String) -> int:
-	# if this cell already stacks another kind, it's not eligible
 	var assigned: String = _treasury_assigned_kind(cell)
 	if assigned != "" and assigned != kind:
+		return 0
+	if not _area_allows(cell, kind):
 		return 0
 	return _cell_capacity(cell) - _cell_stored_kind(cell, kind) - _cell_reserved_kind(cell, kind)
 
@@ -370,12 +531,14 @@ func complete_job(job: Job) -> void:
 			else:
 				rooms_layer.set_cell(job.target_cell, room_treasury_source_id, room_treasury_atlas_coords, room_treasury_alt)
 				treasury_cells[job.target_cell] = true
+
 				if not treasury_contents.has(job.target_cell):
 					treasury_contents[job.target_cell] = {"rock": 0, "carrot": 0}
 				if not treasury_reserved_per_cell.has(job.target_cell):
 					treasury_reserved_per_cell[job.target_cell] = 0
 				_refresh_item_cell_visual(job.target_cell)
 				treasury_stack_kind[job.target_cell] = ""
+				_recompute_treasury_areas()
 
 				# housekeeping: sweep existing rocks under this new treasury
 				var ground_here: int = 0
@@ -413,6 +576,8 @@ func complete_job(job: Job) -> void:
 					if cnt > 0:
 						drop_item(job.target_cell, String(k), cnt)
 						bucket[k] = 0
+						inventory_changed.emit()
+
 				treasury_contents[job.target_cell] = bucket
 
 			# clean up all treasury maps for this cell
@@ -426,6 +591,7 @@ func complete_job(job: Job) -> void:
 
 			# redraw items layer for this cell after spilling
 			_refresh_item_cell_visual(job.target_cell)
+			_recompute_treasury_areas()
 
 	elif job.type.begins_with("haul_"):
 		var kind: String = String(job.data.get("kind", "rock"))
@@ -807,6 +973,7 @@ func _add_treasury_item(cell: Vector2i, kind: String, count: int) -> void:
 	var cur: int = int(bucket.get(kind, 0))
 	bucket[kind] = cur + count
 	treasury_contents[cell] = bucket
+	inventory_changed.emit()
 	_refresh_item_cell_visual(cell)
 
 

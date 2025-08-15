@@ -41,7 +41,11 @@ func _ready() -> void:
 		push_error("ClickInput: Floor or Walls layer not set. Assign NodePaths or add nodes to 'floor_layer' / 'wall_layer' groups.")
 
 func _unhandled_input(event: InputEvent) -> void:
-	
+	if event is InputEventMouseMotion and _mode == MODE_INSPECT:
+		var cell := GridNav.world_to_cell(get_global_mouse_position(), _floor)
+		var info = JobManager.get_cell_inspect_text(cell)
+		DevUI.set_hover_text(info)
+
 	if event is InputEventKey and event.pressed:
 		var kev: InputEventKey = event
 		if kev.keycode == KEY_0:
@@ -151,6 +155,22 @@ func _apply_cell_action(cell: Vector2i) -> void:
 			JobManager.remove_haul_job_at(cell)
 
 	elif _mode == MODE_INSPECT:
+		if _drag_button == MOUSE_BUTTON_LEFT:
+			if JobManager.is_treasury_cell(cell):
+				var rules := JobManager.get_treasury_rules_for_cell(cell)
+				var any_allowed := bool(rules.get("any", true))
+
+				var allowed_any: Array = rules.get("allowed", [])
+				var allowed: Array[String] = []
+				for k in allowed_any:
+					allowed.append(String(k))
+
+				DevUI.show_treasury_config(cell, any_allowed, allowed)
+
+			else:
+				DevUI.hide_treasury_config()
+		elif _drag_button == MOUSE_BUTTON_RIGHT:
+			DevUI.hide_treasury_config()
 		if FarmSystem.has_plot(cell):
 			if _drag_button == MOUSE_BUTTON_LEFT:
 				FarmSystem.toggle_auto_harvest(cell)

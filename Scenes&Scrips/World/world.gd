@@ -10,7 +10,7 @@ extends Node2D
 @onready var rooms: TileMapLayer = $Tilemaps/Rooms
 
 func _ready() -> void:
-	
+	DevUI.set_hover_text("")
 	# add JobOverlay if not present
 	if get_node_or_null("JobOverlay") == null:
 		var o: JobOverlay = JobOverlay.new()
