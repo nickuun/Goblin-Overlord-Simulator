@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=4 uid="uid://bt0v8jw5qkj2x"]
+[gd_scene load_steps=13 format=4 uid="uid://bt0v8jw5qkj2x"]
 
 [ext_resource type="Texture2D" uid="uid://c57yddoihgnyd" path="res://Assets/Tilemaps/1_terrain.png" id="1_wq2g4"]
 [ext_resource type="Texture2D" uid="uid://dhipqlpie16xi" path="res://Assets/Tilemaps/RoomTileset.png" id="2_2byin"]
@@ -396,8 +396,13 @@ sources/0 = SubResource("TileSetAtlasSource_2byin")
 texture = ExtResource("2_2byin")
 0:0/0 = 0
 
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_1f2ry"]
+texture = ExtResource("3_bxkoj")
+50:17/0 = 0
+
 [sub_resource type="TileSet" id="TileSet_q6wrx"]
 sources/0 = SubResource("TileSetAtlasSource_bxkoj")
+sources/1 = SubResource("TileSetAtlasSource_1f2ry")
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_q6wrx"]
 texture = ExtResource("3_bxkoj")
@@ -405,6 +410,8 @@ texture = ExtResource("3_bxkoj")
 33:4/0 = 0
 32:4/0 = 0
 31:4/0 = 0
+58:10/0 = 0
+53:10/0 = 0
 
 [sub_resource type="TileSet" id="TileSet_1f2ry"]
 sources/1 = SubResource("TileSetAtlasSource_q6wrx")

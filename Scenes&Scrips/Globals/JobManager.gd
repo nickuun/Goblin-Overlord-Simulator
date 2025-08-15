@@ -51,10 +51,9 @@ var treasury_contents: Dictionary = {}		# cell(Vector2i) -> {"rock": count}
 var treasury_reserved_per_cell: Dictionary = {}	# cell -> reserved slots
 signal items_changed(cell: Vector2i)
 
-@export var room_farm_source_id: int = -1
-@export var room_farm_atlas_coords: Vector2i = Vector2i.ZERO
+@export var room_farm_source_id: int = 1
+@export var room_farm_atlas_coords: Vector2i = Vector2i(50,17)
 @export var room_farm_alt: int = 0
-
 
 @export var carrot_stack_max_per_cell: int = 12
 @export var carrot_source_id: int = -1
@@ -85,6 +84,14 @@ func set_rock_tiles(source_id: int, a0: Vector2i, a1: Vector2i, a2: Vector2i, a3
 	rock_atlas_coords_2 = a2
 	rock_atlas_coords_3 = a3
 	rock_alt = alternative
+
+func set_farm_tiles(source_id: int, a0: Vector2i, a1: Vector2i, a2: Vector2i, a3: Vector2i, alternative: int) -> void:
+	carrot_source_id = source_id
+	carrot_atlas_coords_0 = a0
+	carrot_atlas_coords_1 = a1
+	carrot_atlas_coords_2 = a2
+	carrot_atlas_coords_3 = a3
+	carrot_alt = alternative
 
 func _rebuild_treasury_cells() -> void:
 	treasury_cells.clear()

@@ -33,6 +33,8 @@ func _ready() -> void:
 	
 	JobManager.treasury_capacity_per_tile = 5	# or 10, etc.
 	JobManager.set_rock_tiles(1, Vector2i(34,4), Vector2i(33,4), Vector2i(32,4), Vector2i(31,4), 0)
+	JobManager.set_farm_tiles(1 ,Vector2i(53,10), Vector2i(53,10), Vector2i(53,10), Vector2i(53,10), 0)
+	
 	JobManager.init(floor, walls, rooms, items)	
 
 	# Optional: set the Treasury tile once (hardcoded)
