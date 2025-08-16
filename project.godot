@@ -36,6 +36,7 @@ window/stretch/mode="canvas_items"
 floor_layer=""
 wall_layer=""
 items_layer=""
+furniture_layer=""
 
 [input]
 

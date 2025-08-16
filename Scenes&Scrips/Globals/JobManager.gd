@@ -75,20 +75,47 @@ var _prev_cell_area_id: Dictionary = {}					# for merging rule carry-over
 # @export var rock_source_id: int = -1
 # @export var rock_atlas_coords_0..3, rock_alt
 
+# --- Furniture tiles ---
+@export var well_source_id: int = 0
+@export var well_atlas_coords: Vector2i = Vector2i(38,16)
+@export var well_alt: int = 0
+
+@export var bucket_source_id: int = 0
+@export var bucket_atlas_coords: Vector2i = Vector2i(37,16)
+@export var bucket_alt: int = 0
+
+var furniture_layer: TileMapLayer
+var well_cells: Dictionary = {}		# cell -> true
+var bucket_cells: Dictionary = {}	# cell -> true
+
+# --- Bucket contents/reservations (water only for now) ---
+@export var bucket_capacity_per_bucket: int = 4
+var bucket_water: Dictionary = {}				# cell -> int
+var bucket_reserved: Dictionary = {}			# cell -> int
+
+# --- Water visuals (optional; set if you have sprites) ---
+@export var water_stack_max_per_cell: int = 12
+@export var water_source_id: int = 0
+@export var water_atlas_coords_0: Vector2i = Vector2i(37,16)
+@export var water_atlas_coords_1: Vector2i = Vector2i(37,16)
+@export var water_atlas_coords_2: Vector2i = Vector2i(37,16)
+@export var water_atlas_coords_3: Vector2i = Vector2i(37,16)
+@export var water_alt: int = 0
+
 func _ready() -> void:
 	var ui := get_node_or_null("/root/DevUI")
 	if ui != null:
 		ui.treasury_rules_changed.connect(on_treasury_rules_changed_from_ui)
 
-func init(floor: TileMapLayer, walls: TileMapLayer, rooms: TileMapLayer, items: TileMapLayer) -> void:
+func init(floor: TileMapLayer, walls: TileMapLayer, rooms: TileMapLayer, furniture: TileMapLayer, items: TileMapLayer) -> void:
 	floor_layer = floor
 	walls_layer = walls
 	rooms_layer = rooms
+	furniture_layer = furniture
 	items_layer = items
 	_rebuild_treasury_cells()
 	treasury_reserved = 0
 	_recompute_treasury_areas()
-
 
 func set_rock_tiles(source_id: int, a0: Vector2i, a1: Vector2i, a2: Vector2i, a3: Vector2i, alternative: int) -> void:
 	rock_source_id = source_id
@@ -226,7 +253,6 @@ func _recompute_treasury_areas() -> void:
 			new_rules[aid] = {"any": true, "allowed": PackedStringArray()}
 	treasury_area_rules = new_rules
 
-
 func _enforce_area_rules(aid: int) -> void:
 	var cells: Array[Vector2i] = area_id_cells.get(aid, [])
 	if cells.size() == 0:
@@ -267,6 +293,117 @@ func _refresh_item_cell_visuals_for_area(aid: int) -> void:
 	var cells: Array[Vector2i] = area_id_cells.get(aid, [])
 	for c in cells:
 		_refresh_item_cell_visual(c)
+
+#Water Helpers
+
+func _bucket_capacity(cell: Vector2i) -> int:
+	return bucket_capacity_per_bucket
+
+func _bucket_stored(cell: Vector2i) -> int:
+	return int(bucket_water.get(cell, 0))
+
+func _bucket_reserved(cell: Vector2i) -> int:
+	return int(bucket_reserved.get(cell, 0))
+
+func _bucket_free_effective(cell: Vector2i) -> int:
+	return _bucket_capacity(cell) - _bucket_stored(cell) - _bucket_reserved(cell)
+
+func _reserve_bucket_cell(cell: Vector2i) -> void:
+	bucket_reserved[cell] = _bucket_reserved(cell) + 1
+
+func _release_bucket_cell(cell: Vector2i) -> void:
+	bucket_reserved[cell] = max(0, _bucket_reserved(cell) - 1)
+
+func _add_bucket_water(cell: Vector2i, count: int) -> void:
+	bucket_water[cell] = _bucket_stored(cell) + count
+	_refresh_item_cell_visual(cell)	# if you also draw water piles on that tile
+
+func create_place_furniture_job(cell: Vector2i, kind: String) -> Job:
+	# block if wall or already has furniture
+	if walls_layer != null and walls_layer.get_cell_source_id(cell) != -1:
+		return null
+	if furniture_layer != null and furniture_layer.get_cell_source_id(cell) != -1:
+		return null
+	var j := Job.new()
+	j.id = _next_id
+	_next_id += 1
+	j.type = "place_furniture"
+	j.target_cell = cell
+	j.data["furniture_kind"] = kind
+	jobs.append(j)
+	job_added.emit(j)
+	return j
+
+func ensure_place_furniture_job(cell: Vector2i, kind: String) -> void:
+	if get_job_at(cell, "place_furniture") != null:
+		return
+	create_place_furniture_job(cell, kind)
+
+func ensure_well_operate_job(well_cell: Vector2i) -> void:
+	if get_job_at(well_cell, "well_operate") != null:
+		return
+	var j := Job.new()
+	j.id = _next_id
+	_next_id += 1
+	j.type = "well_operate"
+	j.target_cell = well_cell
+	jobs.append(j)
+	job_added.emit(j)
+
+func ensure_haul_water_to_bucket(well_cell: Vector2i, bucket_cell: Vector2i) -> void:
+	# produce generic haul job with kind "water" and deposit to bucket
+	if not has_ground_item(well_cell, "water"):
+		return
+	var j := Job.new()
+	j.id = _next_id
+	_next_id += 1
+	j.type = "haul_water"
+	j.target_cell = well_cell
+	j.data["kind"] = "water"
+	j.data["count"] = 1
+	j.data["deposit_cell"] = bucket_cell
+	j.data["deposit_target"] = "bucket"
+	jobs.append(j)
+	job_added.emit(j)
+
+func _ensure_water_supply_jobs() -> void:
+	# for each bucket with free space, try to haul water; if none around, operate a well
+	for bc in bucket_cells.keys():
+		var bcell: Vector2i = bc
+		if _bucket_free_effective(bcell) <= 0:
+			continue
+		print("Bucket ", bcell, " needs water (", _bucket_stored(bcell), "/", _bucket_capacity(bcell), ")")
+		# first look for any well with water on ground
+		var best_well: Vector2i = Vector2i.ZERO
+		var found := false
+		var best_steps := 0
+		for wc in well_cells.keys():
+			if has_ground_item(wc, "water"):
+				var path = GridNav.find_path_cells(bcell, wc)
+				if not path.is_empty():
+					var steps = max(0, path.size() - 1)
+					if not found or steps < best_steps:
+						found = true
+						best_steps = steps
+						best_well = wc
+		if found:
+			# queue one haul if not already queued at that well cell
+			if get_job_at(best_well, "haul_water") == null:
+				ensure_haul_water_to_bucket(best_well, bcell)
+			continue
+		# otherwise, operate any reachable well to create water
+		var picked := false
+		for wc2 in well_cells.keys():
+			var p2 = GridNav.find_path_cells(bcell, wc2)
+			if not p2.is_empty():
+				ensure_well_operate_job(wc2)
+				picked = true
+				break
+		if not picked and well_cells.size() > 0:
+			# as a fallback, operate the first well; hauling may follow later
+			for wc3 in well_cells.keys():
+				ensure_well_operate_job(wc3)
+				break
 
 
 func _treasury_assigned_kind(cell: Vector2i) -> String:
@@ -447,49 +584,67 @@ func create_dig_job(cell: Vector2i) -> Job:
 	return j
 
 func request_job(worker: Node2D) -> Job:
+	_ensure_water_supply_jobs()
+
 	for j: Job in jobs:
-		if j.is_open():
-			if j.type.begins_with("haul_"):
-				var kind: String = String(j.data.get("kind", "rock"))
+		if not j.is_open():
+			continue
 
-				if not _any_treasury_space_available_for(kind):
+		# 1) operate well (stand next to it)
+		if j.type == "well_operate":
+			var adj = _find_reachable_adjacent(worker, j.target_cell)
+			if adj == null:
+				continue
+			j.data["stand_cell"] = adj
+			j.status = Job.Status.RESERVED
+			j.reserved_by = worker.get_path()
+			job_updated.emit(j)
+			return j
+
+		# 2) all hauls
+		if j.type.begins_with("haul_"):
+			var kind: String = String(j.data.get("kind", "rock"))
+
+			var start_cell := GridNav.world_to_cell(worker.global_position, floor_layer)
+			var path_to_item = GridNav.find_path_cells(start_cell, j.target_cell)
+			if path_to_item.is_empty():
+				continue
+
+			# DO NOT reserve unless the item actually exists
+			if not has_ground_item(j.target_cell, kind):
+				continue
+
+			# bucket-targeted haul (water)
+			if j.data.has("deposit_target") and String(j.data["deposit_target"]) == "bucket":
+				var depot_cell: Vector2i = j.data.get("deposit_cell", Vector2i.ZERO)
+				if _bucket_free_effective(depot_cell) <= 0:
 					continue
-				if not has_ground_item(j.target_cell, kind):
-					j.status = Job.Status.CANCELLED
-					job_updated.emit(j)
-					continue
-
-				var start_cell: Vector2i = GridNav.world_to_cell(worker.global_position, floor_layer)
-				var path_to_item: PackedVector2Array = GridNav.find_path_cells(start_cell, j.target_cell)
-				if path_to_item.is_empty():
-					continue
-
-				var depot_cell: Vector2i
-				if j.data.has("deposit_cell"):
-					depot_cell = j.data["deposit_cell"] as Vector2i
-					if _cell_free_effective_kind(depot_cell, kind) <= 0:
-						continue
-				else:
-					var depot_variant = find_best_deposit_cell_for_item(j.target_cell, kind)
-					if depot_variant == null:
-						continue
-					depot_cell = depot_variant as Vector2i
-					j.data["deposit_cell"] = depot_cell
-
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
-				_reserve_treasury_cell(depot_cell, kind)
+				_reserve_bucket_cell(depot_cell)
 				job_updated.emit(j)
 				return j
 
+			# treasury haul (rock/carrot)
+			var depot_variant = find_best_deposit_cell_for_item(j.target_cell, kind)
+			if depot_variant == null:
+				continue
+			var depot_cell2: Vector2i = depot_variant as Vector2i
+			j.data["deposit_cell"] = depot_cell2
+			j.status = Job.Status.RESERVED
+			j.reserved_by = worker.get_path()
+			_reserve_treasury_cell(depot_cell2, kind)
+			job_updated.emit(j)
+			return j
 
-			else:
-				var adj = _find_reachable_adjacent(worker, j.target_cell)
-				if adj != null:
-					j.status = Job.Status.RESERVED
-					j.reserved_by = worker.get_path()
-					job_updated.emit(j)
-					return j
+		# 3) everything else (dig/build/rooms/farm)
+		var adj2 = _find_reachable_adjacent(worker, j.target_cell)
+		if adj2 != null:
+			j.status = Job.Status.RESERVED
+			j.reserved_by = worker.get_path()
+			job_updated.emit(j)
+			return j
+
 	return null
 
 func start_job(job: Job) -> void:
@@ -595,10 +750,20 @@ func complete_job(job: Job) -> void:
 
 	elif job.type.begins_with("haul_"):
 		var kind: String = String(job.data.get("kind", "rock"))
+
+		# --- BUCKET deliveries ---
+		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+			var depot_cell_b: Vector2i = job.data["deposit_cell"] as Vector2i
+			_release_bucket_cell(depot_cell_b)
+			_add_bucket_water(depot_cell_b, int(job.data.get("count", 1)))
+			job.status = Job.Status.DONE
+			job_completed.emit(job)
+			return	# IMPORTANT
+
+		# --- TREASURY deliveries ---
 		if job.data.has("deposit_cell"):
 			var depot_cell: Vector2i = job.data["deposit_cell"] as Vector2i
 			_release_treasury_cell(depot_cell, kind)
-			# lock the cell to this kind once we store here
 			if _treasury_assigned_kind(depot_cell) == "":
 				treasury_stack_kind[depot_cell] = kind
 			_add_treasury_item(depot_cell, kind, int(job.data.get("count", 1)))
@@ -610,12 +775,38 @@ func complete_job(job: Job) -> void:
 					treasury_stack_kind[dc] = kind
 				_add_treasury_item(dc, kind, int(job.data.get("count", 1)))
 
+
 	elif job.type == "farm_harvest":
 		var drop: int = FarmSystem.on_harvest_completed(job.target_cell)	# now 1 or 2 based on auto_replant
 		if drop > 0:
 			drop_item(job.target_cell, "carrot", drop)
 			for i in range(drop):
 				create_haul_job(job.target_cell, "carrot")
+				
+	elif job.type == "place_furniture":
+		var kind: String = String(job.data.get("furniture_kind", "well"))
+		if furniture_layer == null:
+			push_error("JobManager: furniture_layer not set")
+		else:
+			if kind == "well":
+				if well_source_id != -1:
+					furniture_layer.set_cell(job.target_cell, well_source_id, well_atlas_coords, well_alt)
+					well_cells[job.target_cell] = true
+			elif kind == "bucket":
+				if bucket_source_id != -1:
+					furniture_layer.set_cell(job.target_cell, bucket_source_id, bucket_atlas_coords, bucket_alt)
+					bucket_cells[job.target_cell] = true
+					bucket_water[job.target_cell] = 0
+					bucket_reserved[job.target_cell] = 0
+
+	elif job.type == "well_operate":
+		# doing task: produce 1 water on the well cell
+		drop_item(job.target_cell, "water", 1)
+		# try to immediately queue a haul to the nearest needy bucket
+		for bc in bucket_cells.keys():
+			if _bucket_free_effective(bc) > 0:
+				ensure_haul_water_to_bucket(job.target_cell, bc)
+				break
 
 	job.status = Job.Status.DONE
 	job_completed.emit(job)
@@ -872,8 +1063,11 @@ func reopen_job(job: Job) -> void:
 	if job == null:
 		return
 	if job.type.begins_with("haul_") and job.data.has("deposit_cell"):
-		var kind: String = String(job.data.get("kind", "rock"))
-		_release_treasury_cell(job.data["deposit_cell"] as Vector2i, kind)
+		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+			_release_bucket_cell(job.data["deposit_cell"] as Vector2i)
+		else:
+			var kind: String = String(job.data.get("kind", "rock"))
+			_release_treasury_cell(job.data["deposit_cell"] as Vector2i, kind)
 		job.data.erase("deposit_cell")
 	job.status = Job.Status.OPEN
 	job.reserved_by = NodePath("")
@@ -883,12 +1077,14 @@ func cancel_job(job: Job) -> void:
 	if job == null:
 		return
 	if job.type.begins_with("haul_") and job.data.has("deposit_cell"):
-		var kind: String = String(job.data.get("kind", "rock"))
-		_release_treasury_cell(job.data["deposit_cell"] as Vector2i, kind)
+		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+			_release_bucket_cell(job.data["deposit_cell"] as Vector2i)
+		else:
+			var kind: String = String(job.data.get("kind", "rock"))
+			_release_treasury_cell(job.data["deposit_cell"] as Vector2i, kind)
 		job.data.erase("deposit_cell")
 	job.status = Job.Status.CANCELLED
 	job_updated.emit(job)
-
 
 func _refresh_item_cell_visual(cell: Vector2i) -> void:
 	if items_layer == null:

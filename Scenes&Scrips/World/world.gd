@@ -4,6 +4,7 @@ extends Node2D
 @onready var floor: TileMapLayer = $Tilemaps/Floor
 @onready var walls: TileMapLayer = $Tilemaps/Walls
 @onready var items: TileMapLayer = $Tilemaps/Items
+@onready var furniture: TileMapLayer = $Tilemaps/Furniture
 @onready var click: ClickInput = $ClickInput
 @onready var goblin: Goblin = $Goblin
 
@@ -35,7 +36,7 @@ func _ready() -> void:
 	JobManager.set_rock_tiles(1, Vector2i(34,4), Vector2i(33,4), Vector2i(32,4), Vector2i(31,4), 0)
 	JobManager.set_farm_tiles(1 ,Vector2i(53,10), Vector2i(53,10), Vector2i(53,10), Vector2i(53,10), 0)
 	
-	JobManager.init(floor, walls, rooms, items)	
+	JobManager.init(floor, walls, rooms, furniture, items)
 
 	# Optional: set the Treasury tile once (hardcoded)
 	 #JobManager.room_treasury_source_id = <src_id>

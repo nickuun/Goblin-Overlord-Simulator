@@ -19,7 +19,11 @@ const MODE_INSPECT: int = 0
 const MODE_BUILD: int = 1
 const MODE_ROOM: int = 2
 const MODE_SWEEP: int = 3
+const MODE_FURNITURE: int = 4
 var _mode: int = MODE_BUILD
+
+var _furniture_kinds: Array[String] = ["well", "bucket"]
+var _furniture_kind_index: int = 0
 
 var _room_kinds: Array[String] = ["treasury", "farm"]
 var _room_kind_index: int = 0
@@ -48,6 +52,12 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventKey and event.pressed:
 		var kev: InputEventKey = event
+		if kev.keycode == KEY_4:
+			_mode = MODE_FURNITURE
+			print("Mode: FURNITURE (", _furniture_kinds[_furniture_kind_index], ")")
+		elif kev.keycode == KEY_UP and _mode == MODE_FURNITURE:
+			_furniture_kind_index = (_furniture_kind_index + 1) % _furniture_kinds.size()
+			print("Furniture -> ", _furniture_kinds[_furniture_kind_index])
 		if kev.keycode == KEY_0:
 			_mode = MODE_INSPECT
 			print("Mode: INSPECT")
@@ -144,6 +154,13 @@ func _apply_cell_action(cell: Vector2i) -> void:
 				JobManager.remove_room_job_at(cell)
 			else:
 				JobManager.ensure_unassign_room_job(cell)
+				
+	elif _mode == MODE_FURNITURE:
+		if _drag_button == MOUSE_BUTTON_RIGHT:
+			var kind: String = _furniture_kinds[_furniture_kind_index]
+			JobManager.ensure_place_furniture_job(cell, kind)
+		# (optional) left-click could later remove/rotate furniture
+
 
 	elif _mode == MODE_SWEEP:
 		if _drag_button == MOUSE_BUTTON_RIGHT:

@@ -41,7 +41,6 @@ func _idle_tick(delay: float) -> void:
 		var j := JobManager.request_job(_body)
 		if j != null:
 			_current_job = j
-			JobManager.start_job(j)
 			_go_do_job(j)
 		else:
 			_idle_shuffle()
@@ -61,11 +60,26 @@ func _idle_shuffle():
 	var dest := opts[_rng.randi_range(0, opts.size()-1)]
 	_agent.set_destination_cell(dest)  # fire-and-forget small nudge
 
+func _do_simple_work(job: Job) -> void:
+	_agent.set_destination_cell(job.target_cell)
+	await _agent.arrived
+	var here := GridNav.world_to_cell(_body.global_position, _tilemap)
+	if here != job.target_cell:
+		JobManager.reopen_job(job)
+		_current_job = null
+		return
+	JobManager.complete_job(job)
+	_current_job = null
+
 func _go_do_job(job: Job) -> void:
 	
 	if job.type.begins_with("haul_"):
 		await _do_haul(job)
 		return
+	
+	if job.type == "well_operate":
+		await _do_stand_and_work(job)
+		return	
 	
 	var attempts: int = 0
 	while attempts < 3:
@@ -106,58 +120,81 @@ func _go_do_job(job: Job) -> void:
 	JobManager.job_updated.emit(job)
 	_current_job = null
 
-func _do_haul(job: Job) -> void:
-	var kind: String = String(job.data.get("kind", "rock"))
+func _do_stand_and_work(job: Job) -> void:
+	var stand_cell: Vector2i = job.data.get("stand_cell", job.target_cell)
 
-	# still there?
-	if not JobManager.has_ground_item(job.target_cell, kind):
-		JobManager.cancel_job(job)
+	_agent.set_destination_cell(stand_cell)
+	await _agent.arrived
+
+	var here: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
+	if here != stand_cell:
+		JobManager.reopen_job(job)
 		_current_job = null
 		return
 
-	# go to item cell
+	JobManager.start_job(job)
+
+	# do the work
+	await get_tree().create_timer(work_seconds).timeout
+
+	# job could have been cancelled while we waited
+	if job.status == Job.Status.CANCELLED or job.status == Job.Status.DONE:
+		_current_job = null
+		return
+
+	JobManager.complete_job(job)
+	_current_job = null
+	_self_rescue_if_trapped()
+
+
+func _do_haul(job: Job) -> void:
+	var kind: String = String(job.data.get("kind", "rock"))
+
+	# go pick up
 	_agent.set_destination_cell(job.target_cell)
 	await _agent.arrived
+
 	var here: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
 	if here != job.target_cell:
 		JobManager.reopen_job(job)
 		_current_job = null
 		return
 
-	# pick up one unit of that kind
-	var ok: bool = JobManager.take_item(job.target_cell, kind, 1)
-	if not ok:
-		JobManager.cancel_job(job)
-		_current_job = null
-		return
-
-	# deposit cell must be preassigned by JobManager.request_job
-	if not job.data.has("deposit_cell"):
-		# put it back so the ghost reappears
-		JobManager.drop_item(here, kind, 1)
+	# ensure the item still exists
+	if not JobManager.has_ground_item(job.target_cell, kind):
 		JobManager.reopen_job(job)
 		_current_job = null
 		return
 
-	var depot_cell: Vector2i = job.data["deposit_cell"] as Vector2i
-	if not JobManager.treasury_cells.has(depot_cell):
-		JobManager.drop_item(here, kind, 1)
+	JobManager.start_job(job)
+
+	# take one
+	if not JobManager.take_item(job.target_cell, kind, 1):
 		JobManager.reopen_job(job)
 		_current_job = null
 		return
 
-	# walk to the reserved depot cell
-	_agent.set_destination_cell(depot_cell)
-	await _agent.arrived
-	var at_depot: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)
-	if at_depot != depot_cell:
-		JobManager.drop_item(here, kind, 1)
-		JobManager.reopen_job(job)
+	# deposit: bucket or treasury
+	if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+		var depot_b: Vector2i = job.data["deposit_cell"]
+		_agent.set_destination_cell(depot_b)
+		await _agent.arrived
+		JobManager.complete_job(job)
 		_current_job = null
+		_self_rescue_if_trapped()
 		return
 
-	# finish (JobManager will add to EXACT depot_cell + refresh visuals)
-	JobManager.complete_job(job)
+	if job.data.has("deposit_cell"):
+		var depot: Vector2i = job.data["deposit_cell"]
+		_agent.set_destination_cell(depot)
+		await _agent.arrived
+		JobManager.complete_job(job)
+		_current_job = null
+		_self_rescue_if_trapped()
+		return
+
+	# fallback
+	JobManager.reopen_job(job)
 	_current_job = null
 
 func _find_adjacent_for_job(job: Job) -> Variant:

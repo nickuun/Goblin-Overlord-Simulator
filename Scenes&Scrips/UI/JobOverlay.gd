@@ -22,6 +22,13 @@ var _room_unassign: Dictionary = {}
 @export var color_haul: Color = Color(0.6, 0.3, 1.0, 0.35)	# purple
 var _haul: Dictionary = {}	# cell -> {"status": int, "kind": String}
 
+@export var color_place_furniture: Color = Color(0.4, 0.6, 1.0, 0.35)
+@export var color_well_operate: Color = Color(0.2, 0.9, 1.0, 0.35)
+
+var _place_furniture: Dictionary = {}	# cell -> Status
+var _well_operate: Dictionary = {}		# cell -> Status
+
+
 
 func _ready() -> void:
 	JobManager.items_changed.connect(_on_items_changed)
@@ -56,6 +63,8 @@ func _on_job_event(job: Job) -> void:
 	queue_redraw()
 
 func _rebuild() -> void:
+	_place_furniture.clear()
+	_well_operate.clear()
 	_dig.clear()
 	_build.clear()
 	_farm_harvest.clear()
@@ -72,6 +81,10 @@ func _update_job(job: Job) -> void:
 			_dig.erase(job.target_cell)
 		elif job.type == "build_wall":
 			_build.erase(job.target_cell)
+		elif job.type == "place_furniture":
+			_place_furniture.erase(job.target_cell)
+		elif job.type == "well_operate":
+			_well_operate.erase(job.target_cell)
 		elif job.type == "assign_room":
 			_room_assign.erase(job.target_cell)
 		elif job.type == "unassign_room":
@@ -88,6 +101,12 @@ func _update_job(job: Job) -> void:
 		return
 	elif job.type == "build_wall":
 		_build[job.target_cell] = job.status
+		return
+	if job.type == "place_furniture":
+		_place_furniture[job.target_cell] = job.status
+		return
+	elif job.type == "well_operate":
+		_well_operate[job.target_cell] = job.status
 		return
 	elif job.type == "assign_room":
 		_room_assign[job.target_cell] = job.status
@@ -158,6 +177,25 @@ func _draw() -> void:
 		elif stu == Job.Status.ACTIVE:
 			cu.a = cu.a * 0.9
 		_draw_cell(key3, size, half, cu)
+		
+	for kpf in _place_furniture.keys():
+		var cf: Color = color_place_furniture
+		var stf: int = int(_place_furniture[kpf])
+		if stf == Job.Status.RESERVED:
+			cf.a *= 0.6
+		elif stf == Job.Status.ACTIVE:
+			cf.a *= 0.9
+		_draw_cell(kpf, size, half, cf)
+
+	for kw in _well_operate.keys():
+		var cw: Color = color_well_operate
+		var stw: int = int(_well_operate[kw])
+		if stw == Job.Status.RESERVED:
+			cw.a *= 0.6
+		elif stw == Job.Status.ACTIVE:
+			cw.a *= 0.9
+		_draw_cell(kw, size, half, cw)
+
 		
 	for kf in _farm_harvest.keys():
 		var cf: Color = color_farm_harvest
