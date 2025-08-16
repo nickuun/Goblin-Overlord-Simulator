@@ -41,7 +41,6 @@ func toggle_auto_harvest(cell: Vector2i) -> void:
 		if now and bool(plots[cell].get("mature", false)):
 			JobManager.ensure_farm_harvest_job(cell)
 
-
 func toggle_auto_replant(cell: Vector2i) -> void:
 	if plots.has(cell):
 		plots[cell]["auto_replant"] = not bool(plots[cell]["auto_replant"])

@@ -176,6 +176,12 @@ func _do_haul(job: Job) -> void:
 
 	# deposit: bucket or treasury
 	if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+		# SAFETY: if this stale job lost its deposit_cell, just cancel it
+		if not job.data.has("deposit_cell"):
+			JobManager.cancel_job(job)
+			_current_job = null
+			return
+
 		var depot_b: Vector2i = job.data["deposit_cell"]
 		_agent.set_destination_cell(depot_b)
 		await _agent.arrived

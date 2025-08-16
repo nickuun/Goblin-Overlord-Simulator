@@ -412,33 +412,52 @@ func ensure_place_furniture_job(cell: Vector2i, kind: String) -> void:
 
 # cancel/reopen (with proper releases)
 func reopen_job(job: Job) -> void:
-	if job == null: return
-	if job.type.begins_with("haul_") and job.data.has("deposit_cell"):
-		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+	if job == null:
+		return
+
+	# Special-case: water hauls should be CANCELLED (not reopened)
+	if job.type == "haul_water" and job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+		if job.data.has("deposit_cell"):
 			var bcell: Vector2i = job.data["deposit_cell"]
 			WaterSystem.release_bucket(bcell)
 			WaterSystem.clear_pending_for_bucket(bcell)
-		else:
-			var kind := String(job.data.get("kind", "rock"))
-			Inventory.release_cell(job.data["deposit_cell"] as Vector2i, kind)
+		job.status = Job.Status.CANCELLED
+		job_updated.emit(job)
+		return
+
+	# Normal hauls (rock/carrot)
+	if job.type.begins_with("haul_") and job.data.has("deposit_cell"):
+		var kind := String(job.data.get("kind", "rock"))
+		Inventory.release_cell(job.data["deposit_cell"] as Vector2i, kind)
 		job.data.erase("deposit_cell")
+
 	job.status = Job.Status.OPEN
 	job.reserved_by = NodePath("")
 	job_updated.emit(job)
 
 func cancel_job(job: Job) -> void:
-	if job == null: return
-	if job.type.begins_with("haul_") and job.data.has("deposit_cell"):
-		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+	if job == null:
+		return
+
+	if job.type == "haul_water" and job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+		if job.data.has("deposit_cell"):
 			var bcell2: Vector2i = job.data["deposit_cell"]
 			WaterSystem.release_bucket(bcell2)
 			WaterSystem.clear_pending_for_bucket(bcell2)
-		else:
-			var kind2 := String(job.data.get("kind", "rock"))
-			Inventory.release_cell(job.data["deposit_cell"] as Vector2i, kind2)
 		job.data.erase("deposit_cell")
+
+	elif job.type.begins_with("haul_") and job.data.has("deposit_cell"):
+		var kind2 := String(job.data.get("kind", "rock"))
+		Inventory.release_cell(job.data["deposit_cell"] as Vector2i, kind2)
+		job.data.erase("deposit_cell")
+
+	# If a well job is cancelled, unstick any buckets that were "await_well" on this well
+	if job.type == "well_operate":
+		WaterSystem.clear_awaiting_for_well(job.target_cell)
+
 	job.status = Job.Status.CANCELLED
 	job_updated.emit(job)
+
 
 # ===== Internal helpers =======================================================
 func _ensure_build_tile_defaults() -> void:
