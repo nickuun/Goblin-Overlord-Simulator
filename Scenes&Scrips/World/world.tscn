@@ -56,7 +56,16 @@ position = Vector2(0, 1)
 position = Vector2(357, 232)
 
 [node name="Goblin2" parent="." instance=ExtResource("2_uvx4f")]
-position = Vector2(357, 232)
+position = Vector2(334, 307)
+
+[node name="Goblin3" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(428, 352)
+
+[node name="Goblin4" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(535, 296)
+
+[node name="Goblin5" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(538, 229)
 
 [node name="ClickInput" type="Node2D" parent="."]
 script = ExtResource("3_uvx4f")

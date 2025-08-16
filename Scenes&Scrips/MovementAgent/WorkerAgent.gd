@@ -146,11 +146,10 @@ func _do_stand_and_work(job: Job) -> void:
 	_current_job = null
 	_self_rescue_if_trapped()
 
-
 func _do_haul(job: Job) -> void:
 	var kind: String = String(job.data.get("kind", "rock"))
 
-	# go pick up
+	# 1) go to the PICKUP cell (ground item, or a bucket if source=="bucket")
 	_agent.set_destination_cell(job.target_cell)
 	await _agent.arrived
 
@@ -160,28 +159,62 @@ func _do_haul(job: Job) -> void:
 		_current_job = null
 		return
 
-	# ensure the item still exists
-	if not JobManager.has_ground_item(job.target_cell, kind):
-		JobManager.reopen_job(job)
+	# flags we use a couple times
+	var is_farm_delivery := job.data.has("deposit_target") and String(job.data["deposit_target"]) == "farm"
+	var source := String(job.data.get("source", ""))  # "" | "ground" | "bucket"
+
+	# 2) PICKUP
+	if kind == "water" and source == "bucket":
+		# water comes out of a bucket's stored count (not ground)
+		JobManager.start_job(job)
+		if not WaterSystem.consume_bucket_withdraw(job.target_cell):
+			# couldn't consume (stale reservation, someone else took it, etc.)
+			# -> release the reservation and clear the farm's pending so it can re-request
+			WaterSystem.release_bucket_withdraw(job.target_cell)
+			if is_farm_delivery and job.data.has("deposit_cell"):
+				WaterSystem.clear_pending_for_farm(job.data["deposit_cell"])
+			JobManager.reopen_job(job)
+			_current_job = null
+			return
+	else:
+		# normal ground pickup
+		if not JobManager.has_ground_item(job.target_cell, kind):
+			# ground item gone: let the farm re-request if this was for a farm
+			if is_farm_delivery and job.data.has("deposit_cell"):
+				WaterSystem.clear_pending_for_farm(job.data["deposit_cell"])
+			JobManager.reopen_job(job)
+			_current_job = null
+			return
+		JobManager.start_job(job)
+		if not JobManager.take_item(job.target_cell, kind, 1):
+			# couldn't take it after all; same cleanup as above
+			if is_farm_delivery and job.data.has("deposit_cell"):
+				WaterSystem.clear_pending_for_farm(job.data["deposit_cell"])
+			JobManager.reopen_job(job)
+			_current_job = null
+			return
+
+	# 3) DELIVER
+	# 3a) deliver to FARM
+	if is_farm_delivery:
+		if not job.data.has("deposit_cell"):
+			JobManager.cancel_job(job)  # stale job; fail fast
+			_current_job = null
+			return
+		var farm_cell: Vector2i = job.data["deposit_cell"]
+		_agent.set_destination_cell(farm_cell)
+		await _agent.arrived
+		JobManager.complete_job(job)
 		_current_job = null
+		_self_rescue_if_trapped()
 		return
 
-	JobManager.start_job(job)
-
-	# take one
-	if not JobManager.take_item(job.target_cell, kind, 1):
-		JobManager.reopen_job(job)
-		_current_job = null
-		return
-
-	# deposit: bucket or treasury
+	# 3b) deliver to BUCKET
 	if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
-		# SAFETY: if this stale job lost its deposit_cell, just cancel it
 		if not job.data.has("deposit_cell"):
 			JobManager.cancel_job(job)
 			_current_job = null
 			return
-
 		var depot_b: Vector2i = job.data["deposit_cell"]
 		_agent.set_destination_cell(depot_b)
 		await _agent.arrived
@@ -190,6 +223,7 @@ func _do_haul(job: Job) -> void:
 		_self_rescue_if_trapped()
 		return
 
+	# 3c) deliver to specific deposit_cell (treasury etc.)
 	if job.data.has("deposit_cell"):
 		var depot: Vector2i = job.data["deposit_cell"]
 		_agent.set_destination_cell(depot)
@@ -199,9 +233,10 @@ func _do_haul(job: Job) -> void:
 		_self_rescue_if_trapped()
 		return
 
-	# fallback
+	# 3d) fallback: no destination—reopen
 	JobManager.reopen_job(job)
 	_current_job = null
+
 
 func _find_adjacent_for_job(job: Job) -> Variant:
 	var start_cell: Vector2i = GridNav.world_to_cell(_body.global_position, _tilemap)

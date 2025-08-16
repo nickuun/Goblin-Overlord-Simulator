@@ -192,38 +192,64 @@ func request_job(worker: Node2D) -> Job:
 		if not j.is_open():
 			continue
 
-		# 1) well operation (stand next to it)
+		# 1) operate well (stand next to it)
 		if j.type == "well_operate":
 			var adj = _find_reachable_adjacent(worker, j.target_cell)
-			if adj == null: continue
+			if adj == null:
+				continue
 			j.data["stand_cell"] = adj
 			j.status = Job.Status.RESERVED
 			j.reserved_by = worker.get_path()
 			job_updated.emit(j)
 			return j
 
-		# 2) any haul
+		# 2) haul jobs
 		if j.type.begins_with("haul_"):
 			var kind := String(j.data.get("kind", "rock"))
 			var start_cell := GridNav.world_to_cell(worker.global_position, floor_layer)
-			var path_to_item = GridNav.find_path_cells(start_cell, j.target_cell)
-			if path_to_item.is_empty(): continue
-			# must still exist on ground
-			if not has_ground_item(j.target_cell, kind): continue
+			var path_to_pickup = GridNav.find_path_cells(start_cell, j.target_cell)
+			if path_to_pickup.is_empty():
+				continue
 
-			# 2a) water to bucket
-			if j.data.has("deposit_target") and String(j.data["deposit_target"]) == "bucket":
-				var bcell: Vector2i = j.data.get("deposit_cell", Vector2i.ZERO)
-				if WaterSystem.bucket_free_effective(bcell) <= 0: continue
+			# 2a) WATER from BUCKET (no ground item needed)
+			if kind == "water" and String(j.data.get("source", "")) == "bucket":
+				if not WaterSystem.has_bucket_water(j.target_cell):
+					# stale—no water anymore in that bucket
+					cancel_job(j)
+					continue
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
-				WaterSystem.reserve_bucket(bcell)
+				WaterSystem.reserve_bucket_withdraw(j.target_cell)  # reserve the take
 				job_updated.emit(j)
 				return j
 
-			# 2b) inventory deposit (rock/carrot)
+			# 2b) everything else must exist on ground at pickup
+			if not has_ground_item(j.target_cell, kind):
+				continue
+
+			# 2c) water -> BUCKET (delivery target bucket must have space)
+			if j.data.has("deposit_target") and String(j.data["deposit_target"]) == "bucket":
+				var bcell: Vector2i = j.data.get("deposit_cell", Vector2i.ZERO)
+				if WaterSystem.bucket_free_effective(bcell) <= 0:
+					continue
+				j.status = Job.Status.RESERVED
+				j.reserved_by = worker.get_path()
+				WaterSystem.reserve_bucket(bcell)  # receiving bucket slot
+				job_updated.emit(j)
+				return j
+
+			# 2d) water -> FARM (no special reservation)
+			if j.data.has("deposit_target") and String(j.data["deposit_target"]) == "farm":
+				# optional: you could validate farm still pending here
+				j.status = Job.Status.RESERVED
+				j.reserved_by = worker.get_path()
+				job_updated.emit(j)
+				return j
+
+			# 2e) inventory hauls (rock/carrot) -> pick best treasury cell
 			var depot = Inventory.find_best_deposit_cell_for_item(j.target_cell, kind)
-			if depot == null: continue
+			if depot == null:
+				continue
 			var dc: Vector2i = depot
 			j.data["deposit_cell"] = dc
 			j.status = Job.Status.RESERVED
@@ -232,7 +258,7 @@ func request_job(worker: Node2D) -> Job:
 			job_updated.emit(j)
 			return j
 
-		# 3) everything else (dig/build/rooms/farm)
+		# 3) dig/build/room/farm jobs that need adjacent stand cell
 		var adj2 = _find_reachable_adjacent(worker, j.target_cell)
 		if adj2 != null:
 			j.status = Job.Status.RESERVED
@@ -241,6 +267,7 @@ func request_job(worker: Node2D) -> Job:
 			return j
 
 	return null
+
 
 func start_job(job: Job) -> void:
 	if job == null: return
@@ -306,16 +333,29 @@ func complete_job(job: Job) -> void:
 
 	elif job.type.begins_with("haul_"):
 		var kind := String(job.data.get("kind", "rock"))
-		# bucket deliveries
-		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
-			var bcell: Vector2i = job.data["deposit_cell"]
-			WaterSystem.release_bucket(bcell)
-			WaterSystem.add_bucket_water(bcell, int(job.data.get("count", 1)))
-			WaterSystem.clear_pending_for_bucket(bcell)
+
+		# --- deliver to FARM (new) ---
+		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "farm":
+			if job.data.has("deposit_cell"):
+				var farm_cell: Vector2i = job.data["deposit_cell"]
+				FarmSystem.on_water_delivered(farm_cell)
+				WaterSystem.clear_pending_for_farm(farm_cell)
 			job.status = Job.Status.DONE
 			job_completed.emit(job)
 			return
-		# inventory deliveries
+
+		# --- deliver to BUCKET (existing) ---
+		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
+			if job.data.has("deposit_cell"):
+				var bcell: Vector2i = job.data["deposit_cell"]
+				WaterSystem.release_bucket(bcell)  # free the receiving slot
+				WaterSystem.add_bucket_water(bcell, int(job.data.get("count", 1)))
+				WaterSystem.clear_pending_for_bucket(bcell)  # if you keep this helper
+			job.status = Job.Status.DONE
+			job_completed.emit(job)
+			return
+
+		# --- inventory deliveries (rock/carrot) ---
 		if job.data.has("deposit_cell"):
 			var dc: Vector2i = job.data["deposit_cell"]
 			Inventory.release_cell(dc, kind)
