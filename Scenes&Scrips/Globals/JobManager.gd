@@ -233,36 +233,35 @@ func request_job(worker: Node2D) -> Job:
 				if WaterSystem.bucket_free_effective(bcell) <= 0:
 					continue
 
+				# If this is water-from-ground, reserve one unit from the well pile now.
+				if kind == "water" and String(j.data.get("source","")) == "ground":
+					if not WaterSystem.reserve_pile(j.target_cell):
+						continue
+					j.data["pile_reserved"] = true
+
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
 				WaterSystem.reserve_bucket(bcell)  # receiving bucket slot
 
-				# ✅ CLAIM the well puddle now (so the source behaves like rocks)
-				if String(j.data.get("kind","")) == "water" and String(j.data.get("source","")) == "ground":
-					if not WaterSystem.consume_pile(j.target_cell):
-						# Couldn’t claim: free the bucket slot + drop the job
-						WaterSystem.release_bucket(bcell)
-						cancel_job(j)
-						continue
+				# optional: show "incoming" at bucket
+				_refresh_item_cell_visual(bcell)
+				items_changed.emit(bcell)
 
 				job_updated.emit(j)
 				return j
 
 			# 2d) water -> FARM
 			if j.data.has("deposit_target") and String(j.data["deposit_target"]) == "farm":
+				# If this is water-from-ground, reserve one unit from the well pile now.
+				if kind == "water" and String(j.data.get("source","")) == "ground":
+					if not WaterSystem.reserve_pile(j.target_cell):
+						continue
+					j.data["pile_reserved"] = true
+
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
-
-				# ✅ CLAIM the well puddle now
-				if String(j.data.get("kind","")) == "water" and String(j.data.get("source","")) == "ground":
-					if not WaterSystem.consume_pile(j.target_cell):
-						# Couldn’t claim; cancel so the farm can re-request
-						cancel_job(j)
-						continue
-
 				job_updated.emit(j)
 				return j
-
 
 
 			# 2e) inventory hauls (rock/carrot) -> pick best treasury cell
@@ -342,6 +341,7 @@ func complete_job(job: Job) -> void:
 			else:
 				rooms_layer.set_cell(job.target_cell, room_farm_source_id, room_farm_atlas_coords, room_farm_alt)
 			FarmSystem.add_plot(job.target_cell)
+			WaterSystem.request_one_shot_water_to_farm(job.target_cell)
 
 	elif job.type == "unassign_room":
 		if rooms_layer != null:
@@ -352,6 +352,12 @@ func complete_job(job: Job) -> void:
 
 	elif job.type.begins_with("haul_"):
 		var kind := String(job.data.get("kind", "rock"))
+
+		# If this was water-from-ground, release our reservation now that delivery is finishing.
+		if kind == "water" and String(job.data.get("source","")) == "ground":
+			if bool(job.data.get("pile_reserved", false)):
+				WaterSystem.release_pile(job.target_cell)
+				job.data.erase("pile_reserved")
 
 		# --- deliver to FARM (new) ---
 		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "farm":
@@ -474,6 +480,13 @@ func reopen_job(job: Job) -> void:
 	if job == null:
 		return
 
+	# If this was a water-from-ground haul and we reserved a pile unit, release it.
+	if job.type.begins_with("haul_"):
+		if String(job.data.get("kind","")) == "water" and String(job.data.get("source","")) == "ground":
+			if bool(job.data.get("pile_reserved", false)):
+				WaterSystem.release_pile(job.target_cell)
+				job.data.erase("pile_reserved")
+
 	# Special-case: water hauls should be CANCELLED (not reopened)
 	if job.type == "haul_water" and job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
 		if job.data.has("deposit_cell"):
@@ -497,7 +510,14 @@ func reopen_job(job: Job) -> void:
 func cancel_job(job: Job) -> void:
 	if job == null:
 		return
-
+	
+	# If this was a water-from-ground haul and we reserved a pile unit, release it.
+	if job.type.begins_with("haul_"):
+		if String(job.data.get("kind","")) == "water" and String(job.data.get("source","")) == "ground":
+			if bool(job.data.get("pile_reserved", false)):
+				WaterSystem.release_pile(job.target_cell)
+				job.data.erase("pile_reserved")
+				
 	if job.type == "haul_water" and job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
 		if job.data.has("deposit_cell"):
 			var bcell2: Vector2i = job.data["deposit_cell"]
