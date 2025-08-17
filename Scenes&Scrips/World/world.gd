@@ -10,6 +10,18 @@ extends Node2D
 
 @onready var rooms: TileMapLayer = $Tilemaps/Rooms
 
+func _adopt_unknown_treasuries() -> void:
+	var used := rooms.get_used_cells()
+	for c in used:
+		# skip farms
+		if typeof(FarmSystem) != TYPE_NIL and FarmSystem.has_plot(c):
+			continue
+		# already known as treasury? skip
+		if Inventory.is_treasury_cell(c):
+			continue
+		# adopt as treasury
+		Inventory.on_assign_treasury_cell(c)
+
 func _ready() -> void:
 	DevUI.set_hover_text("")
 	# add JobOverlay if not present
@@ -38,6 +50,7 @@ func _ready() -> void:
 	
 	JobManager.init(floor, walls, rooms, furniture, items)
 	Inventory.rebuild_from_rooms_layer()
+	_adopt_unknown_treasuries()  # ← add this
 
 
 	# Optional: set the Treasury tile once (hardcoded)

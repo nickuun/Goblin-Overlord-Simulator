@@ -95,6 +95,8 @@ func rebuild_from_rooms_layer() -> void:
 	_recompute_areas()
 
 
+
+
 # --- public queries -----------------------------------------------------------
 func is_treasury_cell(cell: Vector2i) -> bool:
 	return treasury_cells.has(cell)
