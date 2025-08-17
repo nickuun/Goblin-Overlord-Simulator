@@ -98,6 +98,18 @@ func rebuild_from_rooms_layer() -> void:
 
 
 # --- public queries -----------------------------------------------------------
+func get_world_totals() -> Dictionary:  # NEW
+	# stored totals
+	var out := get_inventory_totals()
+	# include ground piles (if GroundItems exists)
+	if typeof(GroundItems) != TYPE_NIL:
+		for cell in GroundItems.items_on_ground.keys():
+			var bucket: Dictionary = GroundItems.items_on_ground[cell]
+			for k in bucket.keys():
+				out[k] = int(out.get(k, 0)) + int(bucket[k])
+	return out
+
+
 func is_treasury_cell(cell: Vector2i) -> bool:
 	return treasury_cells.has(cell)
 
@@ -126,10 +138,11 @@ func _cell_reserved_kind(cell: Vector2i, kind: String) -> int:
 	return int(b.get(kind, 0))
 
 func cell_free_effective_for(cell: Vector2i, kind: String) -> int:
+	# NEW: non-treasury has no capacity
 	if not is_treasury_cell(cell):
 		return 0
 
-	# RULES GATE
+	# NEW: RULES gate
 	var r := get_rules_for_cell(cell)
 	var any_ok := bool(r.get("any", true))
 	if not any_ok:
@@ -142,7 +155,7 @@ func cell_free_effective_for(cell: Vector2i, kind: String) -> int:
 		if not ok:
 			return 0
 
-	# STACK GATE
+	# existing stack gate
 	var assigned := get_assigned_kind(cell)
 	if assigned != "" and assigned != kind:
 		return 0
@@ -278,7 +291,8 @@ func _recompute_areas() -> void:
 			cell_area_id[cc] = next_id
 		area_id_cells[next_id] = group.duplicate()
 		next_id += 1
-	# carry over rules from the most overlapping previous area
+
+	# rules carryover (your existing logic) ...
 	var new_rules := {}
 	for aid in area_id_cells.keys():
 		var cells: Array[Vector2i] = area_id_cells[aid]
@@ -302,6 +316,10 @@ func _recompute_areas() -> void:
 		else:
 			new_rules[aid] = {"any": true, "allowed": PackedStringArray()}
 	area_rules = new_rules
+
+	# NEW: after any topology/rule carryover, enforce on all areas
+	for aid2 in area_id_cells.keys():
+		_enforce_area_rules(aid2)
 
 func _flood(seed: Vector2i) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []

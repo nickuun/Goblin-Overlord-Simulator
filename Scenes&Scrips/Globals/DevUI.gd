@@ -253,14 +253,28 @@ func _ready() -> void:
 
 	# Relayout on resize
 	get_viewport().connect("size_changed", Callable(self, "_layout_static_panels"))
+	
+	if has_node("/root/JobManager"):
+		JobManager.inventory_changed.connect(_on_inventory_changed)
+		# NEW: also refresh when ground piles change
+		JobManager.items_changed.connect(func(_c): _on_inventory_changed())
+	_on_inventory_changed()
 
 func _on_inventory_changed() -> void:
 	if not Engine.has_singleton("JobManager"):
 		return
-	var totals = JobManager.get_inventory_totals()
-	var r := int(totals.get("rock", 0))
-	var c := int(totals.get("carrot", 0))
-	hud_label.text = "Inventory: Rock %d | Carrot %d" % [r, c]
+	var wallet = Inventory.get_inventory_totals()
+	var world  = Inventory.get_world_totals()  # NEW
+
+	var r_wallet := int(wallet.get("rock", 0))
+	var c_wallet := int(wallet.get("carrot", 0))
+	var r_world  := int(world.get("rock", 0))
+	var c_world  := int(world.get("carrot", 0))
+
+	# e.g. "Wallet: Rock 3 | Carrot 2   World: Rock 5 | Carrot 4"
+	hud_label.text = "Wallet: Rock %d | Carrot %d    World: Rock %d | Carrot %d" % [
+		r_wallet, c_wallet, r_world, c_world
+	]
 
 func set_hover_text(text: String) -> void:
 	hover_label.text = text

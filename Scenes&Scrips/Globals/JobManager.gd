@@ -439,13 +439,29 @@ func complete_job(job: Job) -> void:
 		# --- inventory deliveries (rock/carrot) ---
 		if job.data.has("deposit_cell"):
 			var dc: Vector2i = job.data["deposit_cell"]
+
+			# NEW: rules re-check at the moment of delivery
+			if Inventory.cell_free_effective_for(dc, kind) <= 0:
+				# release the reservation we took when the job was reserved
+				Inventory.release_cell(dc, kind)
+				# spill the carried item on the ground here and queue a haul
+				drop_item(dc, kind, 1)
+				create_haul_job(dc, kind)
+				_refresh_item_cell_visual(dc)
+				job.status = Job.Status.DONE
+				job_completed.emit(job)
+				return
+
+			# original happy path
 			Inventory.release_cell(dc, kind)
 			if Inventory.get_assigned_kind(dc) == "":
 				Inventory.stack_kind[dc] = kind
 			Inventory.add_item(dc, kind, int(job.data.get("count", 1)))
 			_refresh_item_cell_visual(dc)
+
 		else:
-			var dp = Inventory.find_best_deposit_cell_for_item(job.target_cell, kind)
+			# fallback: pick allowed deposit (you already added gating here)
+			var dp = _pick_allowed_deposit_cell(kind, job.target_cell)
 			if dp != null:
 				var dc2: Vector2i = dp
 				if Inventory.get_assigned_kind(dc2) == "":
@@ -666,18 +682,76 @@ func _ensure_build_tile_defaults() -> void:
 	else:
 		push_warning("JobManager: set wall tiles in the Inspector.")
 
-func _ensure_room_tile_defaults(_room_kind: String) -> void:
-	if rooms_layer == null: return
-	if room_treasury_source_id != -1: return
-	var used: PackedVector2Array = rooms_layer.get_used_cells()
-	if used.size() > 0:
-		var sample: Vector2i = used[0]
-		room_treasury_source_id = rooms_layer.get_cell_source_id(sample)
-		room_treasury_atlas_coords = rooms_layer.get_cell_atlas_coords(sample)
-		var alt := 0
-		if rooms_layer.has_method("get_cell_alternative_tile"):
-			alt = rooms_layer.get_cell_alternative_tile(sample)
-		room_treasury_alt = alt
+func _ensure_room_tile_defaults(room_kind: String) -> void:
+	if rooms_layer == null:
+		return
+
+	if room_kind == "treasury":
+		if room_treasury_source_id != -1:
+			return
+
+		# 1) Prefer sampling an existing treasury cell (registered by Inventory)
+		if Inventory != null and Inventory.treasury_cells.size() > 0:
+			for c in Inventory.treasury_cells.keys():
+				var sample: Vector2i = c
+				room_treasury_source_id = rooms_layer.get_cell_source_id(sample)
+				room_treasury_atlas_coords = rooms_layer.get_cell_atlas_coords(sample)
+				var alt := 0
+				if rooms_layer.has_method("get_cell_alternative_tile"):
+					alt = rooms_layer.get_cell_alternative_tile(sample)
+				room_treasury_alt = alt
+				return
+
+		# 2) Otherwise, scan Rooms and pick a tile that is NOT the farm signature (if known)
+		var used: PackedVector2Array = rooms_layer.get_used_cells()
+		if used.size() > 0:
+			var picked: Variant = null
+			# try to avoid farm tiles if we know their signature
+			var have_farm_sig := (room_farm_source_id != -1)
+			for u in used:
+				var sid := rooms_layer.get_cell_source_id(u)
+				var at  := rooms_layer.get_cell_atlas_coords(u)
+				var alt2 := 0
+				if rooms_layer.has_method("get_cell_alternative_tile"):
+					alt2 = rooms_layer.get_cell_alternative_tile(u)
+				if have_farm_sig:
+					if not (sid == room_farm_source_id and at == room_farm_atlas_coords and alt2 == room_farm_alt):
+						picked = u
+						break
+				else:
+					picked = u
+					break
+
+			if picked != null:
+				var p: Vector2i = picked
+				room_treasury_source_id = rooms_layer.get_cell_source_id(p)
+				room_treasury_atlas_coords = rooms_layer.get_cell_atlas_coords(p)
+				var alt3 := 0
+				if rooms_layer.has_method("get_cell_alternative_tile"):
+					alt3 = rooms_layer.get_cell_alternative_tile(p)
+				room_treasury_alt = alt3
+			else:
+				push_warning("JobManager: could not auto-detect a treasury tile (rooms layer has only farm tiles).")
+
+		else:
+			push_warning("JobManager: rooms_layer has no used cells; set treasury tile in the Inspector.")
+
+	elif room_kind == "farm":
+		# Keep your existing behavior for farm defaults
+		if room_farm_source_id != -1:
+			return
+		var used2: PackedVector2Array = rooms_layer.get_used_cells()
+		if used2.size() > 0:
+			var sample2: Vector2i = used2[0]
+			room_farm_source_id = rooms_layer.get_cell_source_id(sample2)
+			room_farm_atlas_coords = rooms_layer.get_cell_atlas_coords(sample2)
+			var altf := 0
+			if rooms_layer.has_method("get_cell_alternative_tile"):
+				altf = rooms_layer.get_cell_alternative_tile(sample2)
+			room_farm_alt = altf
+		else:
+			push_warning("JobManager: set farm tiles in the Inspector.")
+
 
 func _is_cell_occupied_by_worker(cell: Vector2i) -> bool:
 	if floor_layer == null: return false
