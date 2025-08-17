@@ -172,6 +172,25 @@ func _apply_cell_action(cell: Vector2i) -> void:
 	elif _mode == MODE_INSPECT:
 		if _drag_button == MOUSE_BUTTON_LEFT:
 			var cellc: Vector2i = GridNav.world_to_cell(get_global_mouse_position(), _floor)
+			
+			# If this is a rooms-layer tile, not a farm, and not yet registered as treasury → adopt it
+			var rooms_layer := get_tree().get_first_node_in_group("room_layer") as TileMapLayer
+			if rooms_layer != null:
+				var sid := rooms_layer.get_cell_source_id(cellc)
+				if sid != -1 and not JobManager.is_treasury_cell(cellc):
+					var is_farm := false
+					if typeof(FarmSystem) != TYPE_NIL and FarmSystem.has_plot(cellc):
+						is_farm = true
+					else:
+						# also check farm signature to avoid misclassifying farms
+						var jm = get_node_or_null("/root/JobManager")
+						if jm != null and jm.room_farm_source_id != -1:
+							var at := rooms_layer.get_cell_atlas_coords(cellc)
+							if rooms_layer.get_cell_source_id(cellc) == jm.room_farm_source_id and at == jm.room_farm_atlas_coords:
+								is_farm = true
+
+					if not is_farm:
+						Inventory.on_assign_treasury_cell(cellc)  # adopt it now
 
 			# OPEN these first, then bail early.
 			if WaterSystem.bucket_cells.has(cellc):
@@ -318,6 +337,37 @@ func _update_hover_from_mouse() -> void:
 	# ---- Fallback ----
 	if lines.is_empty():
 		lines.append("(x=%d, y=%d)" % [cell.x, cell.y])
+		
+	if Inventory != null:
+	# Treat as inventory if either it's an assigned treasury cell or it actually holds stored items
+		var is_inv := JobManager.is_treasury_cell(cell) or Inventory.contents.has(cell)
+		if is_inv:
+			var kind := ""
+			# Prefer explicitly assigned kind if present
+			if Inventory.has_method("get_assigned_kind"):
+				kind = String(Inventory.get_assigned_kind(cell))
+			# If no assignment, pick the first stored kind with >0
+			if kind == "":
+				var bucket = Inventory.contents.get(cell, {})
+				for k in bucket.keys():
+					if int(bucket[k]) > 0:
+						kind = String(k)
+						break
+			if kind != "":
+				var stored := 0
+				if Inventory.has_method("get_stored"):
+					stored = int(Inventory.get_stored(cell, kind))
+				var free := 0
+				if Inventory.has_method("cell_free_effective_for"):
+					free = max(0, int(Inventory.cell_free_effective_for(cell, kind)))
+				var cap := stored + free  # per-cell effective cap
+				var area_sz := 1
+				if Inventory.has_method("area_cells_for"):
+					var area := Inventory.area_cells_for(cell)
+					area_sz = area.size()
+				var pretty = {"rock":"Rocks","carrot":"Carrots"}.get(kind, kind.capitalize())
+
+				lines.append("%s %d/%d — Treasury %d" % [pretty, stored, cap, area_sz])
 
 	DevUI.set_hover_text("\n".join(lines))
 

@@ -37,6 +37,8 @@ func _ready() -> void:
 	JobManager.set_farm_tiles(1 ,Vector2i(53,10), Vector2i(53,10), Vector2i(53,10), Vector2i(53,10), 0)
 	
 	JobManager.init(floor, walls, rooms, furniture, items)
+	Inventory.rebuild_from_rooms_layer()
+
 
 	# Optional: set the Treasury tile once (hardcoded)
 	 #JobManager.room_treasury_source_id = <src_id>

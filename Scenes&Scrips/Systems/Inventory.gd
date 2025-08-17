@@ -33,16 +33,67 @@ func rebuild_from_rooms_layer() -> void:
 	treasury_cells.clear()
 	if rooms_layer == null:
 		return
+
+	# Pull room signatures if JobManager is available
+	var tre_src: int = -1
+	var tre_at: Vector2i = Vector2i.ZERO
+	var tre_alt: int = 0
+
+	var farm_src: int = -1
+	var farm_at: Vector2i = Vector2i.ZERO
+	var farm_alt: int = 0
+
+	if has_node("/root/JobManager"):
+		var jm = get_node("/root/JobManager")
+		tre_src = jm.room_treasury_source_id
+		tre_at  = jm.room_treasury_atlas_coords
+		tre_alt = jm.room_treasury_alt
+
+		farm_src = jm.room_farm_source_id
+		farm_at  = jm.room_farm_atlas_coords
+		farm_alt = jm.room_farm_alt
+
 	var used: PackedVector2Array = rooms_layer.get_used_cells()
 	for c in used:
-		treasury_cells[c] = true
-		if not contents.has(c):
-			contents[c] = {}
-		if not reserved_per_cell_kind.has(c):
-			reserved_per_cell_kind[c] = {}
-		if not stack_kind.has(c):
-			stack_kind[c] = ""
+		var sid := rooms_layer.get_cell_source_id(c)
+		var at  := rooms_layer.get_cell_atlas_coords(c)
+		var alt := 0
+		if rooms_layer.has_method("get_cell_alternative_tile"):
+			alt = rooms_layer.get_cell_alternative_tile(c)
+
+		var is_farm_tile := false
+		var is_treasury_tile := false
+
+		# 1) farm signature
+		if farm_src != -1 and sid == farm_src and at == farm_at and alt == farm_alt:
+			is_farm_tile = true
+
+		# 2) treasury signature
+		if tre_src != -1 and sid == tre_src and at == tre_at and alt == tre_alt:
+			is_treasury_tile = true
+
+		# 3) farm plots already registered
+		if not is_farm_tile and typeof(FarmSystem) != TYPE_NIL and FarmSystem.has_plot(c):
+			is_farm_tile = true
+
+		# 4) final decision
+		var mark_as_treasury := false
+		if is_farm_tile:
+			mark_as_treasury = false
+		elif is_treasury_tile:
+			mark_as_treasury = true
+		else:
+			# unknown room tile → treat as treasury (fallback)
+			mark_as_treasury = true
+
+		if mark_as_treasury:
+			treasury_cells[c] = true
+			if not contents.has(c): contents[c] = {}
+			if not reserved_per_cell_kind.has(c): reserved_per_cell_kind[c] = {}
+			if not stack_kind.has(c): stack_kind[c] = ""
+
 	_recompute_areas()
+
 
 # --- public queries -----------------------------------------------------------
 func is_treasury_cell(cell: Vector2i) -> bool:
@@ -73,10 +124,29 @@ func _cell_reserved_kind(cell: Vector2i, kind: String) -> int:
 	return int(b.get(kind, 0))
 
 func cell_free_effective_for(cell: Vector2i, kind: String) -> int:
+	if not is_treasury_cell(cell):
+		return 0
+
+	# RULES GATE
+	var r := get_rules_for_cell(cell)
+	var any_ok := bool(r.get("any", true))
+	if not any_ok:
+		var allowed: Array = r.get("allowed", [])
+		var ok := false
+		for s in allowed:
+			if String(s) == kind:
+				ok = true
+				break
+		if not ok:
+			return 0
+
+	# STACK GATE
 	var assigned := get_assigned_kind(cell)
 	if assigned != "" and assigned != kind:
 		return 0
+
 	return cell_capacity(cell) - get_stored(cell, kind) - _cell_reserved_kind(cell, kind)
+
 
 func reserve_cell(cell: Vector2i, kind: String) -> void:
 	var b: Dictionary = reserved_per_cell_kind.get(cell, {})

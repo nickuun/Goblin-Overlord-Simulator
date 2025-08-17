@@ -94,10 +94,30 @@ func init(floor: TileMapLayer, walls: TileMapLayer, rooms: TileMapLayer, furnitu
 
 	Inventory.init(rooms_layer, treasury_capacity_per_tile)
 	WaterSystem.init(furniture_layer)
-
+	_bootstrap_preplaced_rooms()
 	treasury_reserved_legacy = 0
 
+
 # ===== Public small helpers you already use =====
+func _bootstrap_preplaced_rooms() -> void:
+	if rooms_layer == null: return
+	var used := rooms_layer.get_used_cells()
+	for c in used:
+		var sid := rooms_layer.get_cell_source_id(c)
+		var at  := rooms_layer.get_cell_atlas_coords(c)
+		var alt := 0
+		if rooms_layer.has_method("get_cell_alternative_tile"):
+			alt = rooms_layer.get_cell_alternative_tile(c)
+
+		# Treasury
+		if sid == room_treasury_source_id and at == room_treasury_atlas_coords and alt == room_treasury_alt:
+			Inventory.on_assign_treasury_cell(c)
+			_refresh_item_cell_visual(c)
+
+		# Farms
+		elif sid == room_farm_source_id and at == room_farm_atlas_coords and alt == room_farm_alt:
+			FarmSystem.add_plot(c)
+			WaterSystem.request_one_shot_water_to_farm(c)
 
 func _on_inventory_changed() -> void:
 	# Refresh every known treasury cell sprite (cheap at your current scale).

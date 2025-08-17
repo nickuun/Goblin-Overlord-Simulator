@@ -45,6 +45,7 @@ func init(furniture: TileMapLayer) -> void:
 	well_enabled.clear()
 	bucket_enabled.clear()
 	bucket_refill_until.clear()
+	_scan_existing_furniture()
 
 # --- on_place_furniture() ------------------------------------------------------
 func on_place_furniture(cell: Vector2i, kind: String) -> void:
@@ -64,7 +65,35 @@ func on_place_furniture(cell: Vector2i, kind: String) -> void:
 		bucket_refill_until[cell] = bucket_capacity(cell)
 		_schedule_supply_check()
 
+func _scan_existing_furniture() -> void:
+	if furniture_layer == null: return
+	var used := furniture_layer.get_used_cells()
+	for c in used:
+		var sid := furniture_layer.get_cell_source_id(c)
+		var at  := furniture_layer.get_cell_atlas_coords(c)
+		var alt := 0
+		if furniture_layer.has_method("get_cell_alternative_tile"):
+			alt = furniture_layer.get_cell_alternative_tile(c)
+
+		# wells
+		if sid == JobManager.well_source_id and at == JobManager.well_atlas_coords and alt == JobManager.well_alt:
+			well_cells[c] = true
+			well_enabled[c] = true
+
+		# buckets
+		elif sid == JobManager.bucket_source_id and at == JobManager.bucket_atlas_coords and alt == JobManager.bucket_alt:
+			bucket_cells[c] = true
+			bucket_enabled[c] = true
+			bucket_water[c] = int(bucket_water.get(c, 0))
+			bucket_reserved[c] = 0
+			bucket_withdraw_reserved[c] = 0
+			bucket_refill_until[c] = bucket_capacity(c)
+
+	_schedule_supply_check()
+
 # --- tiny getters/setters for UI ----------------------------------------------  # NEW
+
+
 func set_well_enabled(cell: Vector2i, on: bool) -> void:
 	if well_cells.has(cell):
 		well_enabled[cell] = on
