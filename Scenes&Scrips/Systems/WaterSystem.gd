@@ -19,6 +19,7 @@ var pending_by_bucket: Dictionary = {}    # bucket cell -> dict
 #   true  => one-shot haul is in-flight
 #   {"state":"await_well","well":Vector2i} => waiting for a specific well to produce
 var pending_farms: Dictionary = {}        # farm_cell -> true or dict
+var pile_reserved: Dictionary = {}  # well_cell -> reserved count
 
 const DIR4 := [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]
 
@@ -43,6 +44,7 @@ func _steps_to_adjacent(from_cell: Vector2i, center: Vector2i) -> int:
 
 
 func init(furniture: TileMapLayer) -> void:
+	pile_reserved.clear()
 	furniture_layer = furniture
 	well_cells.clear()
 	bucket_cells.clear()
@@ -65,6 +67,32 @@ func on_place_furniture(cell: Vector2i, kind: String) -> void:
 # ------------------------------------------------------------------------
 # Bucket helpers
 # ------------------------------------------------------------------------
+# --- Well ground-water reservation helpers (per-well pile) ---
+func _pile_available(cell: Vector2i) -> int:
+	# Use the autoloaded GroundItems store
+	var ground := GroundItems.count(cell, "water")
+	var reserved := int(pile_reserved.get(cell, 0))
+	return max(0, ground - reserved)
+
+func reserve_pile(cell: Vector2i) -> bool:
+	if _pile_available(cell) > 0:
+		pile_reserved[cell] = int(pile_reserved.get(cell, 0)) + 1
+		return true
+	return false
+
+func release_pile(cell: Vector2i) -> void:
+	pile_reserved[cell] = max(0, int(pile_reserved.get(cell, 0)) - 1)
+
+# Called by WorkerAgent when arriving at the well to pick up the unit reserved for this job.
+# This only converts the reservation to "consumed"; WorkerAgent still calls JobManager.take_item(...)
+func consume_pile(cell: Vector2i) -> bool:
+	var r := int(pile_reserved.get(cell, 0))
+	if r <= 0:
+		return false
+	pile_reserved[cell] = r - 1
+	return true
+
+
 func bucket_capacity(cell: Vector2i) -> int:
 	return bucket_capacity_per_bucket
 
@@ -197,15 +225,25 @@ func request_one_shot_water_to_farm(farm_cell: Vector2i) -> void:
 
 	# ----- enact choice -----
 	if choice_kind == "pile":
-		JobManager.create_job("haul_water", choice_cell, {
-			"kind": "water",
-			"count": 1,
-			"deposit_target": "farm",
-			"deposit_cell": farm_cell,
-			"source": "ground"
-		})
-		pending_farms[farm_cell] = true
+		# Reserve one unit from the well pile; only then create the job
+		if reserve_pile(choice_cell):
+			# avoid duplicates to this farm
+			if not _has_specific_haul_to_farm(choice_cell, farm_cell):
+				JobManager.create_job("haul_water", choice_cell, {
+					"kind": "water",
+					"count": 1,
+					"deposit_target": "farm",
+					"deposit_cell": farm_cell,
+					"source": "ground"
+				})
+			pending_farms[farm_cell] = true
+		else:
+			# No unreserved unit: treat like empty well -> spin it and wait
+			if JobManager.get_job_at(choice_cell, "well_operate") == null:
+				JobManager.create_job("well_operate", choice_cell)
+			pending_farms[farm_cell] = {"state":"await_well", "well": choice_cell}
 		return
+
 
 	if choice_kind == "bucket":
 		# Reserve one withdrawal so two farms don't fight over the same unit.
@@ -222,20 +260,24 @@ func request_one_shot_water_to_farm(farm_cell: Vector2i) -> void:
 			return
 		# fallback if reservation lost the race:
 		if have_pile and (not have_empty or pile_steps <= empty_steps):
-			JobManager.create_job("haul_water", pile_well, {
-				"kind":"water", "count":1,
-				"deposit_target":"farm",
-				"deposit_cell": farm_cell,
-				"source":"ground"
-			})
-			pending_farms[farm_cell] = true
+			if reserve_pile(pile_well):
+				if not _has_specific_haul_to_farm(pile_well, farm_cell):
+					JobManager.create_job("haul_water", pile_well, {
+						"kind":"water", "count":1,
+						"deposit_target":"farm",
+						"deposit_cell": farm_cell,
+						"source":"ground"
+					})
+				pending_farms[farm_cell] = true
+				return
+			# no unreserved unit; spin an empty well if available
+			if have_empty:
+				if JobManager.get_job_at(empty_well, "well_operate") == null:
+					JobManager.create_job("well_operate", empty_well)
+				pending_farms[farm_cell] = {"state":"await_well", "well": empty_well}
+				return
 			return
-		if have_empty:
-			if JobManager.get_job_at(empty_well, "well_operate") == null:
-				JobManager.create_job("well_operate", empty_well)
-			pending_farms[farm_cell] = {"state":"await_well", "well": empty_well}
-			return
-		return
+
 
 	# choice_kind == "empty" → operate well, then we’ll haul when on_well_operate_completed fires
 	if JobManager.get_job_at(choice_cell, "well_operate") == null:
@@ -289,16 +331,23 @@ func ensure_supply_jobs() -> void:
 					best_steps = steps
 					best_well = wc
 		if found:
-			# exactly one haul to THIS bucket
-			JobManager.create_job("haul_water", best_well, {
-				"kind": "water",
-				"count": 1,
-				"deposit_cell": bcell,
-				"deposit_target": "bucket",
-				"source": "ground"
-			})
-			pending_by_bucket[bcell] = {"state":"await_delivery", "well": best_well}
+			# Reserve from the well pile; only then create a specific haul to THIS bucket
+			if reserve_pile(best_well):
+				JobManager.create_job("haul_water", best_well, {
+					"kind": "water",
+					"count": 1,
+					"deposit_cell": bcell,
+					"deposit_target": "bucket",
+					"source": "ground"
+				})
+				pending_by_bucket[bcell] = {"state":"await_delivery", "well": best_well}
+			else:
+				# No unreserved unit left: spin the well again instead
+				if JobManager.get_job_at(best_well, "well_operate") == null:
+					JobManager.create_job("well_operate", best_well)
+				pending_by_bucket[bcell] = {"state":"await_well", "well": best_well}
 			continue
+
 
 		# 2) Otherwise operate the closest reachable idle well
 		var picked := false
@@ -335,34 +384,37 @@ func _validate_pending_buckets() -> void:
 		var state := String(entry.get("state",""))
 		var wcell: Vector2i = Vector2i(entry.get("well", Vector2i.ZERO))
 
-		if state == "await_delivery":
-			# If water is there, ensure there is a haul job specifically for (wcell -> b)
-			if JobManager.has_ground_item(wcell, "water"):
+		if JobManager.has_ground_item(wcell, "water"):
+			if reserve_pile(wcell):
+				# avoid duplicates: only create if not already hauling from this well to THIS bucket
 				if not _has_specific_haul_to_bucket(wcell, b):
 					JobManager.create_job("haul_water", wcell, {
 						"kind":"water", "count":1,
 						"deposit_cell": b, "deposit_target":"bucket",
 						"source":"ground"
 					})
+				pending_by_bucket[b] = {"state":"await_delivery", "well": wcell}
 			else:
-				# water got taken; spin up the well again
+				# No free unit; ensure well is spinning
 				if JobManager.get_job_at(wcell, "well_operate") == null:
 					JobManager.create_job("well_operate", wcell)
 				pending_by_bucket[b] = {"state":"await_well", "well": wcell}
 
-		elif state == "await_well":
-			# If water already appeared, go haul it
-			if JobManager.has_ground_item(wcell, "water"):
-				JobManager.create_job("haul_water", wcell, {
-					"kind":"water", "count":1,
-					"deposit_cell": b, "deposit_target":"bucket",
-					"source":"ground"
-				})
+		if JobManager.has_ground_item(wcell, "water"):
+			if reserve_pile(wcell):
+				if not _has_specific_haul_to_bucket(wcell, b):
+					JobManager.create_job("haul_water", wcell, {
+						"kind":"water", "count":1,
+						"deposit_cell": b, "deposit_target":"bucket",
+						"source":"ground"
+					})
 				pending_by_bucket[b] = {"state":"await_delivery", "well": wcell}
 			else:
 				# ensure a spin job exists
 				if JobManager.get_job_at(wcell, "well_operate") == null:
 					JobManager.create_job("well_operate", wcell)
+
+
 
 	for c in to_clear:
 		clear_pending_for_bucket(c)
@@ -376,6 +428,13 @@ func _has_specific_haul_to_bucket(well_cell: Vector2i, bucket_cell: Vector2i) ->
 				return true
 	return false
 
+func _has_specific_haul_to_farm(well_cell: Vector2i, farm_cell: Vector2i) -> bool:
+	for j in JobManager.jobs:
+		if j.type == "haul_water" and j.target_cell == well_cell and (j.status == Job.Status.OPEN or j.status == Job.Status.RESERVED or j.status == Job.Status.ACTIVE):
+			var dt := String(j.data.get("deposit_target",""))
+			if dt == "farm" and Vector2i(j.data.get("deposit_cell", Vector2i.ZERO)) == farm_cell:
+				return true
+	return false
 # ------------------------------------------------------------------------
 # When a well operation completes (JobManager calls this)
 #   - drop 1 water on the well
@@ -414,14 +473,15 @@ func on_well_operate_completed(well_cell: Vector2i) -> void:
 				target_farm = fc2
 
 	if target_farm != null:
-		# Use THIS one unit for the farm and stop (don't also feed a bucket with the same unit).
-		JobManager.create_job("haul_water", well_cell, {
-			"kind":"water","count":1,
-			"deposit_target":"farm",
-			"deposit_cell": target_farm,
-			"source":"ground"
-		})
-		pending_farms[target_farm] = true
+		if reserve_pile(well_cell):
+			if not _has_specific_haul_to_farm(well_cell, target_farm):
+				JobManager.create_job("haul_water", well_cell, {
+					"kind":"water","count":1,
+					"deposit_target":"farm",
+					"deposit_cell": target_farm,
+					"source":"ground"
+				})
+			pending_farms[target_farm] = true
 		return
 
 	# 2) Serve ONE bucket that was waiting on THIS well
@@ -435,10 +495,63 @@ func on_well_operate_completed(well_cell: Vector2i) -> void:
 			break
 
 	if found and JobManager.has_ground_item(well_cell, "water"):
-		JobManager.create_job("haul_water", well_cell, {
-			"kind":"water","count":1,
-			"deposit_cell": target_bucket,
-			"deposit_target":"bucket",
-			"source":"ground"
-		})
-		pending_by_bucket[target_bucket] = {"state":"await_delivery", "well": well_cell}
+		if reserve_pile(well_cell):
+			if not _has_specific_haul_to_bucket(well_cell, target_bucket):
+				JobManager.create_job("haul_water", well_cell, {
+					"kind":"water","count":1,
+					"deposit_cell": target_bucket,
+					"deposit_target":"bucket",
+					"source":"ground"
+				})
+			pending_by_bucket[target_bucket] = {"state":"await_delivery", "well": well_cell}
+
+func get_bucket_hover_text(cell: Vector2i) -> String:
+	if not bucket_cells.has(cell):
+		return ""
+	var stored := bucket_stored(cell)
+	var cap := bucket_capacity(cell)
+	var incoming := bucket_reserved_count(cell)
+	var outgoing := int(bucket_withdraw_reserved.get(cell, 0))
+	return "[Bucket] %d/%d  (in:+%d  out:-%d)" % [stored, cap, incoming, outgoing]
+
+func _count_spin_jobs(well_cell: Vector2i) -> int:
+	var n := 0
+	for j in JobManager.jobs:
+		if j.target_cell == well_cell and j.type == "well_operate":
+			if j.status == Job.Status.OPEN or j.status == Job.Status.RESERVED or j.status == Job.Status.ACTIVE:
+				n += 1
+	return n
+
+func _count_haul_from_well(well_cell: Vector2i) -> int:
+	var n := 0
+	for j in JobManager.jobs:
+		if j.target_cell == well_cell and j.type == "haul_water":
+			if j.status == Job.Status.OPEN or j.status == Job.Status.RESERVED or j.status == Job.Status.ACTIVE:
+				n += 1
+	return n
+
+func _count_buckets_awaiting(well_cell: Vector2i) -> int:
+	var n := 0
+	for b in pending_by_bucket.keys():
+		var entry: Dictionary = pending_by_bucket[b]
+		if String(entry.get("state","")) == "await_well" and Vector2i(entry.get("well", Vector2i.ZERO)) == well_cell:
+			n += 1
+	return n
+
+func _count_farms_awaiting(well_cell: Vector2i) -> int:
+	var n := 0
+	for fc in pending_farms.keys():
+		var st = pending_farms[fc]
+		if st is Dictionary and String(st.get("state","")) == "await_well" and Vector2i(st.get("well", Vector2i.ZERO)) == well_cell:
+			n += 1
+	return n
+
+func get_well_hover_text(cell: Vector2i) -> String:
+	if not well_cells.has(cell):
+		return ""
+	var pile := GroundItems.count(cell, "water")
+	var spins := _count_spin_jobs(cell)
+	var hauls := _count_haul_from_well(cell)
+	var wait_b := _count_buckets_awaiting(cell)
+	var wait_f := _count_farms_awaiting(cell)
+	return "[Well] pile:%d  spin_jobs:%d  hauls_out:%d  waiting(b:%d f:%d)" % [pile, spins, hauls, wait_b, wait_f]

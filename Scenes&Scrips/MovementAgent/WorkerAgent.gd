@@ -60,6 +60,22 @@ func _idle_shuffle():
 	var dest := opts[_rng.randi_range(0, opts.size()-1)]
 	_agent.set_destination_cell(dest)  # fire-and-forget small nudge
 
+func get_status_text() -> String:
+	# Minimal + safe: describe what the worker is doing.
+	# Customize later if your Job exposes nicer info.
+	if _current_job != null:
+		# Try to show a job "kind" if present; else generic.
+		var kind := ""
+		if _current_job.has_method("get_kind"):
+			kind = String(_current_job.get_kind())
+		elif "kind" in _current_job:
+			kind = str(_current_job.kind)
+		return "Working" + (": " + kind if kind != "" else "")
+	# If agent is moving you can say Walking; otherwise Idle.
+	return "Idle"
+
+
+
 func _do_simple_work(job: Job) -> void:
 	_agent.set_destination_cell(job.target_cell)
 	await _agent.arrived
@@ -177,22 +193,22 @@ func _do_haul(job: Job) -> void:
 			_current_job = null
 			return
 	else:
-		# normal ground pickup
+		# generic ground pickup (rock/carrot/water already claimed at reserve time)
 		if not JobManager.has_ground_item(job.target_cell, kind):
-			# ground item gone: let the farm re-request if this was for a farm
 			if is_farm_delivery and job.data.has("deposit_cell"):
 				WaterSystem.clear_pending_for_farm(job.data["deposit_cell"])
 			JobManager.reopen_job(job)
 			_current_job = null
 			return
+
 		JobManager.start_job(job)
 		if not JobManager.take_item(job.target_cell, kind, 1):
-			# couldn't take it after all; same cleanup as above
 			if is_farm_delivery and job.data.has("deposit_cell"):
 				WaterSystem.clear_pending_for_farm(job.data["deposit_cell"])
 			JobManager.reopen_job(job)
 			_current_job = null
 			return
+
 
 	# 3) DELIVER
 	# 3a) deliver to FARM

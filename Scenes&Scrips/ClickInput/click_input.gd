@@ -45,10 +45,8 @@ func _ready() -> void:
 		push_error("ClickInput: Floor or Walls layer not set. Assign NodePaths or add nodes to 'floor_layer' / 'wall_layer' groups.")
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion and _mode == MODE_INSPECT:
-		var cell := GridNav.world_to_cell(get_global_mouse_position(), _floor)
-		var info = JobManager.get_cell_inspect_text(cell)
-		DevUI.set_hover_text(info)
+	if event is InputEventMouseMotion:
+		_update_hover_from_mouse()
 
 	if event is InputEventKey and event.pressed:
 		var kev: InputEventKey = event
@@ -221,3 +219,110 @@ func _bresenham(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 			err += dx
 			y0 += sy
 	return points
+
+func _get_goblin_under_mouse() -> Node:
+	# Use a point query with Godot 4's query parameters object
+	var space := get_world_2d().direct_space_state
+
+	var params := PhysicsPointQueryParameters2D.new()
+	params.position = get_global_mouse_position()
+	params.collide_with_bodies = true
+	params.collide_with_areas = true
+	params.collision_mask = 0x7FFFFFFF  # all layers (tweak if you like)
+	# params.exclude = []  # optional: add RIDs to exclude yourself etc.
+
+	var results := space.intersect_point(params, 8)  # up to 8 hits
+	for hit in results:
+		var n = hit.get("collider")
+		if n != null and n.is_in_group("goblin"):
+			return n
+
+	# Fallback (if goblins don't have colliders)
+	var mouse := get_global_mouse_position()
+	for n in get_tree().get_nodes_in_group("goblin"):
+		if n is Node2D and n.global_position.distance_to(mouse) <= 16.0:
+			return n
+	return null
+
+func _update_hover_from_mouse() -> void:
+	if _floor == null:
+		return
+
+	var world_pos := get_global_mouse_position()
+	var cell := GridNav.world_to_cell(world_pos, _floor)
+
+	var lines: Array[String] = []
+
+	# ---- Goblin under mouse ----
+	var gob := _get_goblin_under_mouse()
+	if gob:
+		var who := gob.name
+		if gob.has_method("get_name"):
+			who = gob.get_name()
+
+		var doing := "Wandering"
+		# Prefer WorkerAgent status if present
+		var wa := gob.get_node_or_null("WorkerAgent")
+		if wa and wa.has_method("get_status_text"):
+			doing = String(wa.get_status_text())
+		elif gob.has_method("get_status_text"):
+			doing = String(gob.get_status_text())
+
+		lines.append("[Goblin] %s — %s" % [who, doing])
+
+	# ---- Treasury rules ----
+	if JobManager.is_treasury_cell(cell):
+		var rules := JobManager.get_treasury_rules_for_cell(cell)
+		var any_allowed := bool(rules.get("any", true))
+		if any_allowed:
+			lines.append("[Treasury] Any item allowed")
+		else:
+			var allowed_any: Array = rules.get("allowed", [])
+			var allowed: Array[String] = []
+			for k in allowed_any:
+				allowed.append(String(k))
+			lines.append("[Treasury] Allowed: " + ", ".join(allowed))
+
+	# ---- Farm info ----
+	if FarmSystem.has_plot(cell):
+		var p := FarmSystem.get_plot(cell)
+		var crop := String(p.get("crop", "none"))
+		var stage := String(p.get("stage", "seed"))
+		var ready := bool(p.get("ready", false))
+		var auto_h := bool(p.get("auto_harvest", true))
+		var auto_r := bool(p.get("auto_replant", true))
+		lines.append("[Farm] %s (%s)%s | autoH:%s autoR:%s" % [
+			crop, stage, (" — READY" if ready else ""), str(auto_h), str(auto_r)
+		])
+		# ---- Bucket / Well hover diagnostics ----
+	# (These lines are additive; they can appear together with Farm/Treasury info.)
+	var bw_text := ""
+	if WaterSystem != null:
+		# Buckets
+		if WaterSystem.bucket_cells.has(cell):
+			var bt := WaterSystem.get_bucket_hover_text(cell)
+			if bt != "":
+				lines.append(bt)
+		# Wells
+		if WaterSystem.well_cells.has(cell):
+			var wt := WaterSystem.get_well_hover_text(cell)
+			if wt != "":
+				lines.append(wt)
+
+	# ---- Basic tile name (wall / grass) ----
+	if _tile_has(_walls, cell):
+		lines.append("[Tile] wall")
+	elif _tile_has(_floor, cell):
+		lines.append("[Tile] grass")
+
+	# ---- Fallback ----
+	if lines.is_empty():
+		lines.append("(x=%d, y=%d)" % [cell.x, cell.y])
+
+	DevUI.set_hover_text("\n".join(lines))
+
+func _tile_has(layer: TileMapLayer, cell: Vector2i) -> bool:
+	if layer == null:
+		return false
+	# Godot 4: -1 means empty
+	return layer.get_cell_source_id(cell) != -1

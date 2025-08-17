@@ -232,19 +232,38 @@ func request_job(worker: Node2D) -> Job:
 				var bcell: Vector2i = j.data.get("deposit_cell", Vector2i.ZERO)
 				if WaterSystem.bucket_free_effective(bcell) <= 0:
 					continue
+
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
 				WaterSystem.reserve_bucket(bcell)  # receiving bucket slot
+
+				# ✅ CLAIM the well puddle now (so the source behaves like rocks)
+				if String(j.data.get("kind","")) == "water" and String(j.data.get("source","")) == "ground":
+					if not WaterSystem.consume_pile(j.target_cell):
+						# Couldn’t claim: free the bucket slot + drop the job
+						WaterSystem.release_bucket(bcell)
+						cancel_job(j)
+						continue
+
 				job_updated.emit(j)
 				return j
 
-			# 2d) water -> FARM (no special reservation)
+			# 2d) water -> FARM
 			if j.data.has("deposit_target") and String(j.data["deposit_target"]) == "farm":
-				# optional: you could validate farm still pending here
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
+
+				# ✅ CLAIM the well puddle now
+				if String(j.data.get("kind","")) == "water" and String(j.data.get("source","")) == "ground":
+					if not WaterSystem.consume_pile(j.target_cell):
+						# Couldn’t claim; cancel so the farm can re-request
+						cancel_job(j)
+						continue
+
 				job_updated.emit(j)
 				return j
+
+
 
 			# 2e) inventory hauls (rock/carrot) -> pick best treasury cell
 			var depot = Inventory.find_best_deposit_cell_for_item(j.target_cell, kind)
