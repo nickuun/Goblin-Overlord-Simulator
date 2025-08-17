@@ -55,6 +55,12 @@ position = Vector2(0, 1)
 [node name="Goblin" parent="." instance=ExtResource("2_uvx4f")]
 position = Vector2(357, 232)
 
+[node name="Goblin3" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(357, 232)
+
+[node name="Goblin4" parent="." instance=ExtResource("2_uvx4f")]
+position = Vector2(357, 232)
+
 [node name="Goblin2" parent="." instance=ExtResource("2_uvx4f")]
 position = Vector2(334, 307)
 

@@ -194,12 +194,13 @@ func request_one_shot_water_to_farm(farm_cell: Vector2i) -> void:
 				bucket_steps = sb
 				bucket_cell = bc
 
-	# ----- nearest well with a ground water pile -----
+	# ----- nearest well with an UNRESERVED ground water unit -----
 	var have_pile := false
 	var pile_well := Vector2i.ZERO
 	var pile_steps := 0
 	for wc in well_cells.keys():
-		if JobManager.has_ground_item(wc, "water"):
+		# use reservation-aware availability
+		if _pile_available(wc) > 0:
 			var sw := _steps(farm_cell, wc)
 			if sw == -1:
 				continue
@@ -207,6 +208,7 @@ func request_one_shot_water_to_farm(farm_cell: Vector2i) -> void:
 				have_pile = true
 				pile_steps = sw
 				pile_well = wc
+
 
 	# ----- nearest reachable well (even if empty) -> measure to ADJACENT -----
 	var have_empty := false
@@ -261,15 +263,14 @@ func request_one_shot_water_to_farm(farm_cell: Vector2i) -> void:
 
 
 	if choice_kind == "bucket":
-		# Reserve one withdrawal so two farms don't fight over the same unit.
-		# Only create the job if reservation succeeded (race-safe).
 		if reserve_bucket_withdraw(choice_cell):
 			JobManager.create_job("haul_water", choice_cell, {
 				"kind": "water",
 				"count": 1,
 				"deposit_target": "farm",
 				"deposit_cell": farm_cell,
-				"source": "bucket"
+				"source": "bucket",
+				"withdraw_reserved": true   # <— mark it
 			})
 			pending_farms[farm_cell] = true
 			return
@@ -606,7 +607,6 @@ func on_well_operate_completed(well_cell: Vector2i) -> void:
 	if more_demand and not JobManager.has_ground_item(well_cell, "water"):
 		if JobManager.get_job_at(well_cell, "well_operate") == null:
 			JobManager.create_job("well_operate", well_cell)
-
 	
 	_schedule_supply_check()
 

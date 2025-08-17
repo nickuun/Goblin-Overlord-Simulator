@@ -182,16 +182,24 @@ func _do_haul(job: Job) -> void:
 
 	# 2) PICKUP
 	if kind == "water" and source == "bucket":
-		# Taking water out of a bucket (no ground pile)
 		JobManager.start_job(job)
+
+		# NEW: consume the reserved unit from the bucket
 		if not WaterSystem.consume_bucket_withdraw(job.target_cell):
-			# Couldn't consume (stale reservation or empty)
-			WaterSystem.release_bucket_withdraw(job.target_cell)
+			# Lost the reservation or bucket dried up; recover gracefully
 			if is_farm_delivery and job.data.has("deposit_cell"):
-				WaterSystem.clear_pending_for_farm(job.data["deposit_cell"])
-			JobManager.reopen_job(job)
+				var fcell: Vector2i = job.data["deposit_cell"]
+				WaterSystem.clear_pending_for_farm(fcell)
+				WaterSystem.request_one_shot_water_to_farm(fcell)
+			JobManager.cancel_job(job)
 			_current_job = null
 			return
+
+		# We successfully consumed the reserved withdraw; clear the flag so later
+		# cancel/reopen paths don't "double release" a reservation we already used.
+		if job.data.has("withdraw_reserved"):
+			job.data.erase("withdraw_reserved")
+
 	else:
 		# Generic ground pickup (rock/carrot/water)
 		# If nothing there, bail early (farms get unstuck so they can re-request)
@@ -215,12 +223,14 @@ func _do_haul(job: Job) -> void:
 
 		# Remove one unit from the ground (normal path for rocks/carrots/water)
 		if not JobManager.take_item(job.target_cell, kind, 1):
-			# Ground item gone after all—reopen and free farm if needed
 			if is_farm_delivery and job.data.has("deposit_cell"):
-				WaterSystem.clear_pending_for_farm(job.data["deposit_cell"])
-			JobManager.reopen_job(job)
+				var fcell: Vector2i = job.data["deposit_cell"]
+				WaterSystem.clear_pending_for_farm(fcell)
+				WaterSystem.request_one_shot_water_to_farm(fcell)
+			JobManager.cancel_job(job)
 			_current_job = null
 			return
+
 
 	# 3) DELIVER
 	# 3a) deliver to FARM

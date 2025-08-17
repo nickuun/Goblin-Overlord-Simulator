@@ -212,16 +212,35 @@ func request_job(worker: Node2D) -> Job:
 				continue
 
 			# 2a) WATER from BUCKET (no ground item needed)
+			# 2a) WATER f	rom BUCKET (no ground item needed)
 			if kind == "water" and String(j.data.get("source", "")) == "bucket":
-				if not WaterSystem.has_bucket_water(j.target_cell):
-					# stale—no water anymore in that bucket
+				# If the withdraw was already reserved at job creation, just take the job.
+				if bool(j.data.get("withdraw_reserved", false)):
+					j.status = Job.Status.RESERVED
+					j.reserved_by = worker.get_path()
+					job_updated.emit(j)
+					return j
+
+				# Legacy/older jobs: try to reserve now (authoritative). No has_bucket_water gate.
+				if not WaterSystem.reserve_bucket_withdraw(j.target_cell):
+					# Stale / bucket drained / someone else took it.
+					# If this was for a farm, free the farm and retry next frame.
+					if j.data.has("deposit_target") and String(j.data["deposit_target"]) == "farm" and j.data.has("deposit_cell"):
+						var fcell: Vector2i = j.data["deposit_cell"]
+						WaterSystem.clear_pending_for_farm(fcell)
+						WaterSystem.call_deferred("request_one_shot_water_to_farm", fcell)
 					cancel_job(j)
 					continue
+
+				# Mark and hand it out.
+				j.data["withdraw_reserved"] = true
 				j.status = Job.Status.RESERVED
 				j.reserved_by = worker.get_path()
-				WaterSystem.reserve_bucket_withdraw(j.target_cell)  # reserve the take
 				job_updated.emit(j)
 				return j
+
+
+
 
 			# 2b) everything else must exist on ground at pickup
 			if not has_ground_item(j.target_cell, kind):
@@ -255,6 +274,14 @@ func request_job(worker: Node2D) -> Job:
 				# If this is water-from-ground, reserve one unit from the well pile now.
 				if kind == "water" and String(j.data.get("source","")) == "ground":
 					if not WaterSystem.reserve_pile(j.target_cell):
+						# The puddle exists but all units are already reserved by others.
+						# -> free the farm so it can re-evaluate next frame (bucket, other well, or wait).
+						if j.data.has("deposit_cell"):
+							var fcell: Vector2i = j.data["deposit_cell"]
+							WaterSystem.clear_pending_for_farm(fcell)
+							# IMPORTANT: defer the re-request to avoid job-loop thrash in this same call
+							WaterSystem.call_deferred("request_one_shot_water_to_farm", fcell)
+						cancel_job(j)
 						continue
 					j.data["pile_reserved"] = true
 
@@ -262,6 +289,7 @@ func request_job(worker: Node2D) -> Job:
 				j.reserved_by = worker.get_path()
 				job_updated.emit(j)
 				return j
+
 
 
 			# 2e) inventory hauls (rock/carrot) -> pick best treasury cell
@@ -479,6 +507,12 @@ func ensure_place_furniture_job(cell: Vector2i, kind: String) -> void:
 func reopen_job(job: Job) -> void:
 	if job == null:
 		return
+		
+	# Release bucket-withdraw if this was a bucket-source water haul
+	if job.type == "haul_water" and String(job.data.get("source","")) == "bucket":
+		if bool(job.data.get("withdraw_reserved", false)):
+			WaterSystem.release_bucket_withdraw(job.target_cell)
+			job.data.erase("withdraw_reserved")
 
 	# If this was a water-from-ground haul and we reserved a pile unit, release it.
 	if job.type.begins_with("haul_"):
@@ -510,7 +544,26 @@ func reopen_job(job: Job) -> void:
 func cancel_job(job: Job) -> void:
 	if job == null:
 		return
-	
+		
+	# Release bucket-withdraw if this was a bucket-source water haul
+	if job.type == "haul_water" and String(job.data.get("source","")) == "bucket":
+		if bool(job.data.get("withdraw_reserved", false)):
+			WaterSystem.release_bucket_withdraw(job.target_cell)
+			job.data.erase("withdraw_reserved")
+
+	# If this was a farm delivery, clear its pending and re-request so it can pick a new source
+	if job.type == "haul_water" and job.data.has("deposit_target") and String(job.data["deposit_target"]) == "farm":
+		if job.data.has("deposit_cell"):
+			var fcell: Vector2i = job.data["deposit_cell"]
+			WaterSystem.clear_pending_for_farm(fcell)
+			WaterSystem.request_one_shot_water_to_farm(fcell)
+
+	# Release bucket-withdraw if this was a bucket-source water haul
+	if job.type == "haul_water" and String(job.data.get("source","")) == "bucket":
+		if bool(job.data.get("withdraw_reserved", false)):
+			WaterSystem.release_bucket_withdraw(job.target_cell)
+			job.data.erase("withdraw_reserved")
+
 	# If this was a water-from-ground haul and we reserved a pile unit, release it.
 	if job.type.begins_with("haul_"):
 		if String(job.data.get("kind","")) == "water" and String(job.data.get("source","")) == "ground":
