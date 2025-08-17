@@ -293,7 +293,7 @@ func request_job(worker: Node2D) -> Job:
 
 
 			# 2e) inventory hauls (rock/carrot) -> pick best treasury cell
-			var depot = Inventory.find_best_deposit_cell_for_item(j.target_cell, kind)
+			var depot = _pick_allowed_deposit_cell(kind, j.target_cell)   # NEW
 			if depot == null:
 				continue
 			var dc: Vector2i = depot
@@ -303,7 +303,6 @@ func request_job(worker: Node2D) -> Job:
 			Inventory.reserve_cell(dc, kind)
 			job_updated.emit(j)
 			return j
-
 		# 3) dig/build/room/farm jobs that need adjacent stand cell
 		var adj2 = _find_reachable_adjacent(worker, j.target_cell)
 		if adj2 != null:
@@ -393,6 +392,15 @@ func complete_job(job: Job) -> void:
 				var farm_cell: Vector2i = job.data["deposit_cell"]
 				FarmSystem.on_water_delivered(farm_cell)
 				WaterSystem.clear_pending_for_farm(farm_cell)
+			else:
+				# was: var dp = Inventory.find_best_deposit_cell_for_item(job.target_cell, kind)
+				var dp = _pick_allowed_deposit_cell(kind, job.target_cell)   # NEW
+				if dp != null:
+					var dc2: Vector2i = dp
+					if Inventory.get_assigned_kind(dc2) == "":
+						Inventory.stack_kind[dc2] = kind
+					Inventory.add_item(dc2, kind, int(job.data.get("count", 1)))
+					_refresh_item_cell_visual(dc2)
 			job.status = Job.Status.DONE
 			job_completed.emit(job)
 			return
@@ -592,6 +600,37 @@ func cancel_job(job: Job) -> void:
 
 
 # ===== Internal helpers =======================================================
+# --- helper near the top or under "Job utils" ---------------------------------  # NEW
+func _is_allowed_in_cell_for(cell: Vector2i, kind: String) -> bool:
+	var rules := Inventory.get_rules_for_cell(cell)
+	var any_allowed := bool(rules.get("any", true))
+	if any_allowed: return true
+	var allowed_any: Array = rules.get("allowed", [])
+	for k in allowed_any:
+		if String(k) == kind:
+			return true
+	return false
+
+func _pick_allowed_deposit_cell(kind: String, near_cell: Vector2i) -> Variant:
+	# Start with Inventory's suggestion
+	var dc = Inventory.find_best_deposit_cell_for_item(near_cell, kind)
+	if dc == null: return null
+	var cell: Vector2i = dc
+
+	# If that cell obeys rules and has space, use it
+	if _is_allowed_in_cell_for(cell, kind) and Inventory.cell_free_effective_for(cell, kind) > 0:
+		return cell
+
+	# Otherwise, search within this treasury area for an allowed spot with space
+	var area: Array[Vector2i] = Inventory.area_cells_for(cell)
+	for c in area:
+		if _is_allowed_in_cell_for(c, kind) and Inventory.cell_free_effective_for(c, kind) > 0:
+			return c
+
+	# No allowed space
+	return null
+
+
 func _ensure_build_tile_defaults() -> void:
 	if walls_layer == null: return
 	if build_wall_source_id != -1: return

@@ -171,30 +171,30 @@ func _apply_cell_action(cell: Vector2i) -> void:
 
 	elif _mode == MODE_INSPECT:
 		if _drag_button == MOUSE_BUTTON_LEFT:
-			if JobManager.is_treasury_cell(cell):
-				var rules := JobManager.get_treasury_rules_for_cell(cell)
+			var cellc: Vector2i = GridNav.world_to_cell(get_global_mouse_position(), _floor)
+
+			# OPEN these first, then bail early.
+			if WaterSystem.bucket_cells.has(cellc):
+				DevUI.show_bucket_config(cellc)
+				return                                            # <— IMPORTANT
+			if WaterSystem.well_cells.has(cellc):
+				DevUI.show_well_config(cellc)
+				return                                            # <— IMPORTANT
+			if FarmSystem.has_plot(cellc):
+				DevUI.show_farm_config(cellc)
+				return                                            # <— IMPORTANT
+
+			# Fallback: treasury panel
+			if JobManager.is_treasury_cell(cellc):
+				var rules := JobManager.get_treasury_rules_for_cell(cellc)
 				var any_allowed := bool(rules.get("any", true))
-
-				var allowed_any: Array = rules.get("allowed", [])
 				var allowed: Array[String] = []
-				for k in allowed_any:
-					allowed.append(String(k))
-
-				DevUI.show_treasury_config(cell, any_allowed, allowed)
-
+				for k in rules.get("allowed", []): allowed.append(String(k))
+				DevUI.show_treasury_config(cellc, any_allowed, allowed)
 			else:
-				DevUI.hide_treasury_config()
+				DevUI.hide_all_panels()
 		elif _drag_button == MOUSE_BUTTON_RIGHT:
-			DevUI.hide_treasury_config()
-		if FarmSystem.has_plot(cell):
-			if _drag_button == MOUSE_BUTTON_LEFT:
-				FarmSystem.toggle_auto_harvest(cell)
-				var p := FarmSystem.get_plot(cell)
-				print("Farm ", cell, ": auto_harvest=", p.get("auto_harvest", true))
-			elif _drag_button == MOUSE_BUTTON_RIGHT:
-				FarmSystem.toggle_auto_replant(cell)
-				var p2 := FarmSystem.get_plot(cell)
-				print("Farm ", cell, ": auto_replant=", p2.get("auto_replant", true))
+			DevUI.hide_all_panels()
 
 func _bresenham(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 	var points: Array[Vector2i] = []
