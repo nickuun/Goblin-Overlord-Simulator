@@ -93,6 +93,15 @@ func rebuild_from_rooms_layer() -> void:
 			if not stack_kind.has(c): stack_kind[c] = ""
 
 	_recompute_areas()
+	
+	var touched: Array[Vector2i] = []
+	for c in treasury_cells.keys():
+		touched.append(c)
+	if touched.size() > 0:
+		area_changed.emit(touched)     # batch for overlays
+		for cell in touched:
+			cell_changed.emit(cell)     # per-cell redraws
+	inventory_changed.emit()            # totals/labels/etc
 
 
 
