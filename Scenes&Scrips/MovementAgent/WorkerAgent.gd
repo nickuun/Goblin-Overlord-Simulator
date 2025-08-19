@@ -262,14 +262,72 @@ func _do_haul(job: Job) -> void:
 		return
 
 	# 3c) deliver to specific deposit_cell (treasury etc.)
+	# 3c) deliver to specific deposit_cell (treasury etc.)
 	if job.data.has("deposit_cell"):
 		var depot: Vector2i = job.data["deposit_cell"]
+		var original_depot := depot
+		var had_res := bool(job.data.get("deposit_reserved", false))
+
+		# Walk to intended depot
 		_agent.set_destination_cell(depot)
 		await _agent.arrived
-		JobManager.complete_job(job)
+
+		# Check viability *with* reservation considered
+		var allowed := JobManager._is_allowed_in_cell_for(depot, kind)
+		var free := Inventory.cell_free_effective_for(depot, kind)
+		var viable_here := allowed and (free > 0 or (free == 0 and had_res))
+
+		if viable_here:
+			# Let complete_job handle the actual deposit & releasing reservation
+			JobManager.complete_job(job)
+			_current_job = null
+			_self_rescue_if_trapped()
+			return
+
+		# Not viable anymore → release original reservation (if any)
+		if had_res:
+			Inventory.release_cell(depot, kind)
+			job.data.erase("deposit_reserved")
+
+		# Try to reserve an alternate legal spot right now
+		var alt = JobManager._pick_allowed_deposit_cell(kind, depot)
+		if alt != null and Vector2i(alt) != original_depot:
+			var alt_cell: Vector2i = alt
+			var free_alt := Inventory.cell_free_effective_for(alt_cell, kind)
+			if free_alt > 0:
+				# Reserve the alternative and go there
+				Inventory.reserve_cell(alt_cell, kind)
+				job.data["deposit_cell"] = alt_cell
+				job.data["deposit_reserved"] = true
+
+				_agent.set_destination_cell(alt_cell)
+				await _agent.arrived
+
+				# Re-check at alt with reservation
+				var allowed2 := JobManager._is_allowed_in_cell_for(alt_cell, kind)
+				var free2 := Inventory.cell_free_effective_for(alt_cell, kind)
+				if allowed2 and (free2 > 0 or (free2 == 0 and bool(job.data.get("deposit_reserved", false)))):
+					JobManager.complete_job(job)
+					_current_job = null
+					_self_rescue_if_trapped()
+					return
+
+				# Alt failed (race) → clean up alt reservation
+				if bool(job.data.get("deposit_reserved", false)):
+					Inventory.release_cell(alt_cell, kind)
+					job.data.erase("deposit_reserved")
+
+		# Last resort: drop at the original depot and queue a sweep
+		JobManager.drop_item(original_depot, kind, 1)
+		JobManager.create_haul_job(original_depot, kind)
+		JobManager._refresh_item_cell_visual(original_depot)
+		job.status = Job.Status.DONE
+		JobManager.job_completed.emit(job)
 		_current_job = null
 		_self_rescue_if_trapped()
 		return
+
+
 
 	# 3d) fallback: no destination—reopen
 	JobManager.reopen_job(job)

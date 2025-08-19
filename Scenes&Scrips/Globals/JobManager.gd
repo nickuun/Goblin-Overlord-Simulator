@@ -196,7 +196,11 @@ func create_job(type: String, cell: Vector2i, data: Dictionary = {}) -> Job:
 
 # shorthand you were using
 func create_haul_job(cell: Vector2i, kind: String) -> Job:
-	if not has_ground_item(cell, kind): return null
+	# Never create generic water hauls; WaterSystem will issue targeted ones.
+	if kind == "water":
+		return null
+	if not has_ground_item(cell, kind):
+		return null
 	return create_job("haul_" + kind, cell, {"kind": kind, "count": 1})
 
 func ensure_haul_job(cell: Vector2i, kind: String) -> void:
@@ -312,17 +316,22 @@ func request_job(worker: Node2D) -> Job:
 
 
 
-			# 2e) inventory hauls (rock/carrot) -> pick best treasury cell
-			var depot = _pick_allowed_deposit_cell(kind, j.target_cell)   # NEW
+			# 2e) inventory hauls (rock/carrot) -> pick best treasury cell  (non-water only)
+			if kind == "water":
+				continue
+			var depot = _pick_allowed_deposit_cell(kind, j.target_cell)
 			if depot == null:
 				continue
 			var dc: Vector2i = depot
 			j.data["deposit_cell"] = dc
+			j.data["deposit_reserved"] = true
 			j.status = Job.Status.RESERVED
 			j.reserved_by = worker.get_path()
 			Inventory.reserve_cell(dc, kind)
 			job_updated.emit(j)
 			return j
+
+
 		# 3) dig/build/room/farm jobs that need adjacent stand cell
 		var adj2 = _find_reachable_adjacent(worker, j.target_cell)
 		if adj2 != null:
@@ -400,67 +409,63 @@ func complete_job(job: Job) -> void:
 	elif job.type.begins_with("haul_"):
 		var kind := String(job.data.get("kind", "rock"))
 
-		# If this was water-from-ground, release our reservation now that delivery is finishing.
+		# Release well-pile reservation if this was water-from-ground
 		if kind == "water" and String(job.data.get("source","")) == "ground":
 			if bool(job.data.get("pile_reserved", false)):
 				WaterSystem.release_pile(job.target_cell)
 				job.data.erase("pile_reserved")
 
-		# --- deliver to FARM (new) ---
-		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "farm":
-			if job.data.has("deposit_cell"):
-				var farm_cell: Vector2i = job.data["deposit_cell"]
-				FarmSystem.on_water_delivered(farm_cell)
-				WaterSystem.clear_pending_for_farm(farm_cell)
-			else:
-				# was: var dp = Inventory.find_best_deposit_cell_for_item(job.target_cell, kind)
-				var dp = _pick_allowed_deposit_cell(kind, job.target_cell)   # NEW
-				if dp != null:
-					var dc2: Vector2i = dp
-					if Inventory.get_assigned_kind(dc2) == "":
-						Inventory.stack_kind[dc2] = kind
-					Inventory.add_item(dc2, kind, int(job.data.get("count", 1)))
-					_refresh_item_cell_visual(dc2)
-			job.status = Job.Status.DONE
-			job_completed.emit(job)
-			return
-
-		# --- deliver to BUCKET (existing) ---
+		# --- deliver to BUCKET (handle before any generic deposit) ---
 		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "bucket":
 			if job.data.has("deposit_cell"):
 				var bcell: Vector2i = job.data["deposit_cell"]
-				WaterSystem.release_bucket(bcell)  # free the receiving slot
+				WaterSystem.release_bucket(bcell)
 				WaterSystem.add_bucket_water(bcell, int(job.data.get("count", 1)))
-				WaterSystem.clear_pending_for_bucket(bcell)  # if you keep this helper
+				WaterSystem.clear_pending_for_bucket(bcell)
 			job.status = Job.Status.DONE
 			job_completed.emit(job)
 			return
 
-		# --- inventory deliveries (rock/carrot) ---
-		if job.data.has("deposit_cell"):
+		# --- deliver to FARM (handle before any generic deposit) ---
+		if job.data.has("deposit_target") and String(job.data["deposit_target"]) == "farm":
+			if job.data.has("deposit_cell"):
+				var fcell: Vector2i = job.data["deposit_cell"]
+				FarmSystem.on_water_delivered(fcell)
+				WaterSystem.clear_pending_for_farm(fcell)
+			job.status = Job.Status.DONE
+			job_completed.emit(job)
+			return
+
+		# --- inventory deliveries (non-water only) ---
+		if job.data.has("deposit_cell") and kind != "water":
 			var dc: Vector2i = job.data["deposit_cell"]
 
-			# NEW: rules re-check at the moment of delivery
-			if Inventory.cell_free_effective_for(dc, kind) <= 0:
-				# release the reservation we took when the job was reserved
-				Inventory.release_cell(dc, kind)
-				# spill the carried item on the ground here and queue a haul
+			# Release reservation first so capacity check is truthful
+			Inventory.release_cell(dc, kind)
+
+			var allowed := _is_allowed_in_cell_for(dc, kind)
+			var free := Inventory.cell_free_effective_for(dc, kind)
+			if (not allowed) or free <= 0:
+				# Can't place here now (rules changed or it's actually full):
+				# drop on ground and queue a sweep (non-water only).
 				drop_item(dc, kind, 1)
-				create_haul_job(dc, kind)
+				ensure_haul_job(dc, kind)   # create_haul_job ignores "water"
 				_refresh_item_cell_visual(dc)
 				job.status = Job.Status.DONE
 				job_completed.emit(job)
 				return
 
-			# original happy path
-			Inventory.release_cell(dc, kind)
+			# Happy path: deposit to inventory
 			if Inventory.get_assigned_kind(dc) == "":
 				Inventory.stack_kind[dc] = kind
 			Inventory.add_item(dc, kind, int(job.data.get("count", 1)))
 			_refresh_item_cell_visual(dc)
+			job.status = Job.Status.DONE
+			job_completed.emit(job)
+			return
 
-		else:
-			# fallback: pick allowed deposit (you already added gating here)
+		# --- fallback: try to pick a deposit now (non-water only) ---
+		if kind != "water":
 			var dp = _pick_allowed_deposit_cell(kind, job.target_cell)
 			if dp != null:
 				var dc2: Vector2i = dp
@@ -468,6 +473,16 @@ func complete_job(job: Job) -> void:
 					Inventory.stack_kind[dc2] = kind
 				Inventory.add_item(dc2, kind, int(job.data.get("count", 1)))
 				_refresh_item_cell_visual(dc2)
+				job.status = Job.Status.DONE
+				job_completed.emit(job)
+				return
+
+		# No valid inventory target (or this was water with no target):
+		# drop at pickup cell; WaterSystem will re-evaluate as needed.
+		drop_item(job.target_cell, kind, int(job.data.get("count", 1)))
+		job.status = Job.Status.DONE
+		job_completed.emit(job)
+		return
 
 	elif job.type == "farm_harvest":
 		var drop := FarmSystem.on_harvest_completed(job.target_cell) # 1 or 2 depending on auto_replant
@@ -496,6 +511,52 @@ func complete_job(job: Job) -> void:
 # inventory spill handler -> drop to ground + queue hauls
 func _on_inventory_spill_items(cell: Vector2i, kind: String, count: int) -> void:
 	if count <= 0: return
+
+	# If the spill happened *inside a treasury*, try to re-home it immediately
+	if Inventory.is_treasury_cell(cell):
+		var remain := count
+		var area: Array[Vector2i] = Inventory.area_cells_for(cell)
+
+		# First pass: fill existing stacks of the same kind
+		for c in area:
+			if c == cell: continue
+			if Inventory.get_stored(c, kind) <= 0: continue
+			var free = max(0, Inventory.cell_free_effective_for(c, kind))
+			if free <= 0: continue
+			var put = min(free, remain)
+			if put > 0:
+				if Inventory.get_assigned_kind(c) == "":
+					Inventory.stack_kind[c] = kind
+				Inventory.add_item(c, kind, put)
+				_refresh_item_cell_visual(c)
+				remain -= put
+			if remain <= 0:
+				break
+
+		# Second pass: use empty/unassigned slots
+		if remain > 0:
+			for c2 in area:
+				if c2 == cell: continue
+				var free2 = max(0, Inventory.cell_free_effective_for(c2, kind))
+				if free2 <= 0: continue
+				var put2 = min(free2, remain)
+				if put2 > 0:
+					if Inventory.get_assigned_kind(c2) == "":
+						Inventory.stack_kind[c2] = kind
+					Inventory.add_item(c2, kind, put2)
+					_refresh_item_cell_visual(c2)
+					remain -= put2
+				if remain <= 0:
+					break
+
+		# Only spill leftovers to ground and queue sweeps
+		if remain > 0:
+			drop_item(cell, kind, remain)
+			for i in range(remain):
+				create_haul_job(cell, kind)
+		return
+
+	# Non-treasury spills: original behavior
 	drop_item(cell, kind, count)
 	for i in range(count):
 		create_haul_job(cell, kind)
@@ -648,22 +709,23 @@ func _is_allowed_in_cell_for(cell: Vector2i, kind: String) -> bool:
 	return false
 
 func _pick_allowed_deposit_cell(kind: String, near_cell: Vector2i) -> Variant:
-	# Start with Inventory's suggestion
+	# Water is never routed to inventory.
+	if kind == "water":
+		return null
+
 	var dc = Inventory.find_best_deposit_cell_for_item(near_cell, kind)
-	if dc == null: return null
+	if dc == null:
+		return null
 	var cell: Vector2i = dc
 
-	# If that cell obeys rules and has space, use it
 	if _is_allowed_in_cell_for(cell, kind) and Inventory.cell_free_effective_for(cell, kind) > 0:
 		return cell
 
-	# Otherwise, search within this treasury area for an allowed spot with space
 	var area: Array[Vector2i] = Inventory.area_cells_for(cell)
 	for c in area:
 		if _is_allowed_in_cell_for(c, kind) and Inventory.cell_free_effective_for(c, kind) > 0:
 			return c
 
-	# No allowed space
 	return null
 
 

@@ -104,6 +104,9 @@ func rebuild_from_rooms_layer() -> void:
 	inventory_changed.emit()            # totals/labels/etc
 
 
+func is_kind_storable(kind: String) -> bool:
+	return kind != "water"
+	
 
 
 # --- public queries -----------------------------------------------------------
@@ -147,11 +150,15 @@ func _cell_reserved_kind(cell: Vector2i, kind: String) -> int:
 	return int(b.get(kind, 0))
 
 func cell_free_effective_for(cell: Vector2i, kind: String) -> int:
-	# NEW: non-treasury has no capacity
+	# Non-treasury has no capacity
 	if not is_treasury_cell(cell):
 		return 0
 
-	# NEW: RULES gate
+	# Water is never stored in treasury cells
+	if not is_kind_storable(kind):
+		return 0
+
+	# RULES gate
 	var r := get_rules_for_cell(cell)
 	var any_ok := bool(r.get("any", true))
 	if not any_ok:
@@ -164,33 +171,58 @@ func cell_free_effective_for(cell: Vector2i, kind: String) -> int:
 		if not ok:
 			return 0
 
-	# existing stack gate
+	# Stack gate
 	var assigned := get_assigned_kind(cell)
 	if assigned != "" and assigned != kind:
 		return 0
 
-	return cell_capacity(cell) - get_stored(cell, kind) - _cell_reserved_kind(cell, kind)
-
+	# Capacity (clamped to >= 0)
+	var free := cell_capacity(cell) - get_stored(cell, kind) - _cell_reserved_kind(cell, kind)
+	return max(0, free)
 
 func reserve_cell(cell: Vector2i, kind: String) -> void:
+	if not is_treasury_cell(cell):
+		return
+	if not is_kind_storable(kind):
+		return
 	var b: Dictionary = reserved_per_cell_kind.get(cell, {})
 	b[kind] = int(b.get(kind, 0)) + 1
 	reserved_per_cell_kind[cell] = b
 
 func release_cell(cell: Vector2i, kind: String) -> void:
+	if not is_treasury_cell(cell):
+		return
+	if not is_kind_storable(kind):
+		return
 	var b: Dictionary = reserved_per_cell_kind.get(cell, {})
 	b[kind] = max(0, int(b.get(kind, 0)) - 1)
 	reserved_per_cell_kind[cell] = b
 
-func add_item(cell: Vector2i, kind: String, count: int) -> void:
+func add_item(cell: Vector2i, kind: String, count: int) -> int:
+	if count <= 0:
+		return 0
+	# refuse non-treasury or non-storable kinds (e.g., water)
+	if not is_treasury_cell(cell):
+		return count
+	if not is_kind_storable(kind):
+		return count
+
 	if not contents.has(cell):
 		contents[cell] = {}
 	var bucket: Dictionary = contents[cell]
-	bucket[kind] = int(bucket.get(kind, 0)) + count
-	contents[cell] = bucket
-	inventory_changed.emit()
-	cell_changed.emit(cell)
-	
+
+	var cur := int(bucket.get(kind, 0))
+	var cap := cell_capacity(cell)
+	var free = max(0, cap - cur)
+	var put = min(free, count)
+
+	if put > 0:
+		bucket[kind] = cur + put
+		contents[cell] = bucket
+		inventory_changed.emit()
+		cell_changed.emit(cell)
+
+	return count - put
 
 # --- rules / areas ------------------------------------------------------------
 func get_rules_for_cell(cell: Vector2i) -> Dictionary:
