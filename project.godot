@@ -13,6 +13,9 @@ config_version=5
 config/name="GoblinKing"
 run/main_scene="uid://bx61vmhyxl5le"
 config/features=PackedStringArray("4.4", "Forward Plus")
+boot_splash/bg_color=Color(0.2, 0.2, 0.2, 1)
+boot_splash/use_filter=false
+boot_splash/image="uid://ndgu8ynkuelr"
 config/icon="res://icon.svg"
 
 [autoload]
