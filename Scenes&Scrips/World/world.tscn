@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3 uid="uid://bx61vmhyxl5le"]
+[gd_scene load_steps=16 format=3 uid="uid://bx61vmhyxl5le"]
 
 [ext_resource type="Script" uid="uid://dvcyhg6b8wp7r" path="res://Scenes&Scrips/World/world.gd" id="1_1i41f"]
 [ext_resource type="PackedScene" uid="uid://bt0v8jw5qkj2x" path="res://Scenes&Scrips/Tilemaps/tilemaps.tscn" id="1_u1om0"]
@@ -7,6 +7,8 @@
 [ext_resource type="Script" uid="uid://cjedp45di4xrv" path="res://Scenes&Scrips/Camera/MainCamera.gd" id="5_7basv"]
 [ext_resource type="Texture2D" uid="uid://cdfnmdlkgljfk" path="res://Assets/Characters/GoblinKing/Goblin King Sprite Sheet.png" id="6_ityab"]
 [ext_resource type="Texture2D" uid="uid://pb8t4rrluthw" path="res://Assets/Tilemaps/spr_tileset_sunnysideworld_16px.png" id="7_0ycgl"]
+[ext_resource type="PackedScene" uid="uid://cphjro8hnrfvx" path="res://Scenes&Scrips/UI/time_ui.tscn" id="8_rsgel"]
+[ext_resource type="PackedScene" uid="uid://bvspj0wkuxppo" path="res://Scenes&Scrips/UI/day_night_overlay.tscn" id="9_3nalg"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_0ycgl"]
 atlas = ExtResource("6_ityab")
@@ -86,5 +88,17 @@ position = Vector2(600, 204)
 texture = ExtResource("7_0ycgl")
 region_enabled = true
 region_rect = Rect2(832, 60, 16, 36)
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="DayNightOverlay" parent="CanvasLayer" instance=ExtResource("9_3nalg")]
+mouse_filter = 1
+
+[node name="TimeUI" parent="CanvasLayer" instance=ExtResource("8_rsgel")]
+offset_left = 501.0
+offset_top = 302.0
+offset_right = 501.0
+offset_bottom = 302.0
+mouse_filter = 1
 
 [editable path="Tilemaps"]
