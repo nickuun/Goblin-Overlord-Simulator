@@ -7,8 +7,8 @@ extends Node2D
 @onready var furniture: TileMapLayer = $Tilemaps/Furniture
 @onready var click: ClickInput = $ClickInput
 @onready var goblin: Goblin = $Goblin
-
 @onready var rooms: TileMapLayer = $Tilemaps/Rooms
+@onready var water: TileMapLayer = $Tilemaps/Water
 
 func _adopt_unknown_treasuries() -> void:
 	var used := rooms.get_used_cells()
@@ -41,8 +41,11 @@ func _ready() -> void:
 	# Build nav + init jobs
 	if not rooms.is_in_group("room_layer"):
 		rooms.add_to_group("room_layer")
+	if not water.is_in_group("water_layer"):
+		water.add_to_group("water_layer")
 
 	GridNav.build_from_layers(floor, walls)
+	WaterTiles.init(water)
 	
 	JobManager.treasury_capacity_per_tile = 5	# or 10, etc.
 	JobManager.set_rock_tiles(1, Vector2i(34,4), Vector2i(33,4), Vector2i(32,4), Vector2i(31,4), 0)

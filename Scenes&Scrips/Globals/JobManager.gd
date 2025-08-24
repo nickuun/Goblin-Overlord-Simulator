@@ -498,6 +498,7 @@ func complete_job(job: Job) -> void:
 		else:
 			if fk == "well" and well_source_id != -1:
 				furniture_layer.set_cell(job.target_cell, well_source_id, well_atlas_coords, well_alt)
+				GridNav.astar.set_point_solid(job.target_cell, false)
 			elif fk == "bucket" and bucket_source_id != -1:
 				furniture_layer.set_cell(job.target_cell, bucket_source_id, bucket_atlas_coords, bucket_alt)
 			WaterSystem.on_place_furniture(job.target_cell, fk)
@@ -604,8 +605,54 @@ func create_build_job(cell: Vector2i) -> Job:
 	if walls_layer.get_cell_source_id(cell) != -1: return null
 	return create_job("build_wall", cell)
 
+# JobManager.gd
 func ensure_place_furniture_job(cell: Vector2i, kind: String) -> void:
-	if get_job_at(cell, "place_furniture") != null: return
+	if furniture_layer == null:
+		push_error("JobManager: furniture_layer not set")
+		return
+	if get_job_at(cell, "place_furniture") != null:
+		return
+	# no walls
+	if walls_layer != null and walls_layer.get_cell_source_id(cell) != -1:
+		return
+	# no overlapping furniture
+	if furniture_layer.get_cell_source_id(cell) != -1:
+		return
+
+	# Helper: must have at least one adjacent walkable tile so a goblin can stand/operate
+	var has_adjacent_walkable := false
+	for d in DIR4:
+		if GridNav.is_walkable(cell + d):
+			has_adjacent_walkable = true
+			break
+
+	if kind == "well":
+		# MUST be on a water tile
+		if typeof(WaterTiles) == TYPE_NIL or not WaterTiles.is_water(cell):
+			push_warning("Well must be placed on water.")
+			return
+		if not has_adjacent_walkable:
+			push_warning("No adjacent walkable tile next to the well location.")
+			return
+		create_job("place_furniture", cell, {"furniture_kind": "well"})
+		return
+
+	if kind == "bucket":
+		# Buckets should NOT sit on water (optional, but sensible)
+		if typeof(WaterTiles) != TYPE_NIL and WaterTiles.is_water(cell):
+			push_warning("Bucket cannot be placed on water.")
+			return
+		if not has_adjacent_walkable:
+			# you might allow buckets in tight corners; keep or remove this guard as you like
+			push_warning("No adjacent walkable tile next to the bucket location.")
+			return
+		create_job("place_furniture", cell, {"furniture_kind": "bucket"})
+		return
+
+	# default path for other furniture kinds
+	if not has_adjacent_walkable:
+		push_warning("No adjacent walkable tile to operate this furniture.")
+		return
 	create_job("place_furniture", cell, {"furniture_kind": kind})
 
 # cancel/reopen (with proper releases)

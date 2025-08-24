@@ -27,6 +27,7 @@ DevUI="*res://Scenes&Scrips/Globals/DevUI.gd"
 GroundItems="*res://Scenes&Scrips/Systems/GroundItems.gd"
 Inventory="*res://Scenes&Scrips/Systems/Inventory.gd"
 WaterSystem="*res://Scenes&Scrips/Systems/WaterSystem.gd"
+WaterTiles="*res://Scenes&Scrips/Globals/WaterTiles.gd"
 
 [display]
 

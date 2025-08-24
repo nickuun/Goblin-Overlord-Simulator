@@ -50,6 +50,7 @@ func init(furniture: TileMapLayer) -> void:
 # --- on_place_furniture() ------------------------------------------------------
 func on_place_furniture(cell: Vector2i, kind: String) -> void:
 	if kind == "well":
+		GridNav.astar.set_point_solid(cell, false)
 		well_cells[cell] = true
 		# NEW defaults
 		well_enabled[cell] = true
